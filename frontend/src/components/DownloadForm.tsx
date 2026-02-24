@@ -14,11 +14,18 @@ export default function DownloadForm({ onSubmit, isLoading }: Props) {
   const [urlError, setUrlError] = useState('');
 
   function validateUrl(value: string): boolean {
+    const ALLOWED_HOSTNAMES = new Set([
+      'www.youtube.com',
+      'youtube.com',
+      'm.youtube.com',
+      'music.youtube.com',
+      'youtu.be',
+    ]);
     try {
       const u = new URL(value);
       return (
-        (u.hostname.includes('youtube.com') || u.hostname.includes('youtu.be')) &&
-        (u.searchParams.has('v') || u.hostname === 'youtu.be')
+        (u.protocol === 'http:' || u.protocol === 'https:') &&
+        ALLOWED_HOSTNAMES.has(u.hostname)
       );
     } catch {
       return false;

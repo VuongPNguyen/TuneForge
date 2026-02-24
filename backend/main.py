@@ -1,30 +1,79 @@
-import os
+import re
 import uuid
-import json
 import base64
 import asyncio
+import logging
 import shutil
 from pathlib import Path
 from typing import Optional
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse, quote as urlquote
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+import httpx
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import yt_dlp
-from mutagen.mp3 import MP3
 from mutagen.id3 import (
     ID3, TIT2, TPE1, TALB, TPE2, TDRC, TRCK, TCON, APIC, ID3NoHeaderError
 )
 from PIL import Image
 import io
 
+# Limit PIL decompression-bomb risk (~50 megapixels)
+Image.MAX_IMAGE_PIXELS = 50_000_000
+
+logger = logging.getLogger(__name__)
+
 TEMP_DIR = Path(__file__).parent / "temp"
 TEMP_DIR.mkdir(exist_ok=True)
 
-# Clean up temp files older than 1 hour on startup
+# --- Constants -----------------------------------------------------------
+VALID_BITRATES = {96, 128, 256, 320}
+MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024          # 500 MB per video
+MAX_THUMB_BYTES = 2 * 1024 * 1024               # 2 MB thumbnail
+MAX_ALBUM_ART_B64_BYTES = 7 * 1024 * 1024       # ~5 MB decoded (base64 overhead ~1.37×)
+ALBUM_ART_MAX_DIM = 1000                         # Max px per side when embedding album art
+MIN_FREE_DISK_BYTES = 1 * 1024 * 1024 * 1024    # Refuse downloads if <1 GB free
+MAX_CONCURRENT_DOWNLOADS = 5                     # Semaphore cap on parallel yt-dlp jobs
+ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP", "GIF"}
+
+ALLOWED_YT_HOSTNAMES = {
+    "www.youtube.com",
+    "youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+}
+
+# Trusted CDN hostnames that YouTube thumbnails are served from
+ALLOWED_THUMB_HOSTNAMES = {
+    "i.ytimg.com",
+    "i1.ytimg.com",
+    "i2.ytimg.com",
+    "i3.ytimg.com",
+    "i4.ytimg.com",
+    "img.youtube.com",
+    "yt3.ggpht.com",
+    "yt3.googleusercontent.com",
+    "lh3.googleusercontent.com",
+}
+
+UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+
+# -------------------------------------------------------------------------
+
+# Semaphore that caps parallel yt-dlp/ffmpeg jobs
+_DOWNLOAD_SEM: asyncio.Semaphore  # initialised in lifespan
+
+
 def cleanup_old_files():
     import time
     now = time.time()
@@ -33,56 +82,189 @@ def cleanup_old_files():
             f.unlink(missing_ok=True)
 
 
+async def _periodic_cleanup():
+    """Run cleanup every 30 minutes so stale files don't accumulate between restarts."""
+    while True:
+        await asyncio.sleep(1800)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, cleanup_old_files)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _DOWNLOAD_SEM
+    _DOWNLOAD_SEM = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
     cleanup_old_files()
+    task = asyncio.create_task(_periodic_cleanup())
     yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
+
+def _get_client_ip(request: Request) -> str:
+    """Use the direct TCP connection IP — never trust X-Forwarded-For to prevent rate-limit spoofing."""
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+limiter = Limiter(key_func=_get_client_ip)
 
 app = FastAPI(title="YT to MP3 API", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        # Disable legacy browser XSS filter (causes more harm than good in modern browsers)
+        response.headers["X-XSS-Protection"] = "0"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' https://fonts.googleapis.com; "
+            "font-src https://fonts.gstatic.com; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none';"
+        )
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 
+# --- Request models -------------------------------------------------------
+
 class DownloadRequest(BaseModel):
-    url: str
+    url: str = Field(max_length=2048)
     bitrate: int = 256
 
 
 class ID3Tags(BaseModel):
-    title: Optional[str] = None
-    artist: Optional[str] = None
-    album: Optional[str] = None
-    album_artist: Optional[str] = None
-    year: Optional[str] = None
-    track_number: Optional[str] = None
-    genre: Optional[str] = None
-    album_art_base64: Optional[str] = None
+    title: Optional[str] = Field(None, max_length=500)
+    artist: Optional[str] = Field(None, max_length=500)
+    album: Optional[str] = Field(None, max_length=500)
+    album_artist: Optional[str] = Field(None, max_length=500)
+    year: Optional[str] = Field(None, pattern=r"^\d{4}$")
+    track_number: Optional[str] = Field(None, max_length=20)
+    genre: Optional[str] = Field(None, max_length=100)
+    album_art_base64: Optional[str] = None  # Size validated separately
 
 
 class SaveRequest(BaseModel):
-    file_id: str
+    file_id: str = Field(max_length=36)
     tags: ID3Tags
-    filename: str
+    filename: str = Field(default="download", max_length=255)
 
 
-VALID_BITRATES = {96, 128, 256, 320}
+# --- Helpers --------------------------------------------------------------
 
+def _validate_youtube_url(url: str) -> bool:
+    """Return True only for http(s) YouTube URLs."""
+    try:
+        parsed = urlparse(url)
+        return parsed.scheme in ("http", "https") and parsed.hostname in ALLOWED_YT_HOSTNAMES
+    except Exception:
+        return False
+
+
+def _validate_file_id(file_id: str) -> bool:
+    """Return True only for well-formed v4 UUIDs."""
+    return bool(UUID_RE.match(file_id))
+
+
+def _safe_filename(name: str) -> str:
+    keep = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.()")
+    sanitized = "".join(c if c in keep else "_" for c in name).strip()
+    return sanitized[:100] or "download"
+
+
+def _safe_log_url(url: str) -> str:
+    """Strip control characters and truncate for safe log output."""
+    return url.replace("\n", " ").replace("\r", " ").replace("\t", " ")[:200]
+
+
+def _fetch_thumbnail(url: str) -> bytes:
+    """Fetch thumbnail only from trusted CDN hostnames, without following redirects."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        raise ValueError("Invalid thumbnail URL")
+
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Thumbnail URL must use http or https")
+
+    if parsed.hostname not in ALLOWED_THUMB_HOSTNAMES:
+        raise ValueError(f"Thumbnail host not in allowlist: {parsed.hostname}")
+
+    with httpx.Client(follow_redirects=False, timeout=5.0) as client:
+        resp = client.get(url)
+
+    if resp.status_code != 200:
+        raise ValueError(f"Thumbnail fetch returned status {resp.status_code}")
+
+    data = resp.content
+    if len(data) > MAX_THUMB_BYTES:
+        raise ValueError("Thumbnail response exceeded size limit")
+    return data
+
+
+def _check_disk_space():
+    """Raise 503 if free disk space in TEMP_DIR falls below the minimum threshold."""
+    free = shutil.disk_usage(TEMP_DIR).free
+    if free < MIN_FREE_DISK_BYTES:
+        raise HTTPException(
+            status_code=503,
+            detail="Server storage is temporarily full. Please try again later.",
+        )
+
+
+def _download(url: str, opts: dict) -> dict:
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        return info or {}
+
+
+def _cleanup_files(file_id: str):
+    for ext in [".mp3", ".webm", ".m4a", ".opus"]:
+        (TEMP_DIR / f"{file_id}{ext}").unlink(missing_ok=True)
+
+
+# --- Endpoints ------------------------------------------------------------
 
 @app.post("/api/download")
-async def download_video(req: DownloadRequest):
+@limiter.limit("5/minute")
+async def download_video(request: Request, req: DownloadRequest):
+    if not _validate_youtube_url(req.url):
+        raise HTTPException(status_code=400, detail="URL must be a valid YouTube URL")
+
     if req.bitrate not in VALID_BITRATES:
-        raise HTTPException(status_code=400, detail=f"Bitrate must be one of {sorted(VALID_BITRATES)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bitrate must be one of {sorted(VALID_BITRATES)}",
+        )
+
+    _check_disk_space()
 
     file_id = str(uuid.uuid4())
     output_path = TEMP_DIR / f"{file_id}.mp3"
-    info_path = TEMP_DIR / f"{file_id}.json"
 
     ydl_opts = {
         "format": "bestaudio/best",
@@ -94,31 +276,39 @@ async def download_video(req: DownloadRequest):
                 "preferredquality": str(req.bitrate),
             }
         ],
+        "max_filesize": MAX_DOWNLOAD_BYTES,
+        "socket_timeout": 30,
         "quiet": True,
         "no_warnings": True,
     }
 
     try:
-        loop = asyncio.get_event_loop()
-        info = await loop.run_in_executor(None, lambda: _download(req.url, ydl_opts))
+        loop = asyncio.get_running_loop()
+        async with _DOWNLOAD_SEM:
+            info = await loop.run_in_executor(None, lambda: _download(req.url, ydl_opts))
     except yt_dlp.utils.DownloadError as e:
-        raise HTTPException(status_code=400, detail=f"Download failed: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+        logger.error("yt-dlp download error for %s: %s", _safe_log_url(req.url), e)
+        raise HTTPException(
+            status_code=400,
+            detail="Download failed. Please check the URL and try again.",
+        )
+    except Exception:
+        logger.exception("Unexpected error during download for %s", _safe_log_url(req.url))
+        raise HTTPException(status_code=500, detail="An unexpected error occurred. Please try again.")
 
     if not output_path.exists():
         raise HTTPException(status_code=500, detail="MP3 file was not created")
 
-    # Extract auto-populated metadata from YouTube
     thumbnail_b64 = None
     if info.get("thumbnail"):
         try:
-            import urllib.request
+            loop = asyncio.get_running_loop()
             thumb_data = await loop.run_in_executor(
-                None, lambda: urllib.request.urlopen(info["thumbnail"], timeout=5).read()
+                None, lambda: _fetch_thumbnail(info["thumbnail"])
             )
-            # Resize thumbnail to a reasonable size
             img = Image.open(io.BytesIO(thumb_data))
+            if img.format not in ALLOWED_IMAGE_FORMATS:
+                raise ValueError(f"Thumbnail format not allowed: {img.format}")
             img.thumbnail((500, 500))
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=85)
@@ -140,40 +330,28 @@ async def download_video(req: DownloadRequest):
         "webpage_url": info.get("webpage_url", req.url),
     }
 
-    info_path.write_text(json.dumps(metadata))
-
     return metadata
 
 
-def _download(url: str, opts: dict) -> dict:
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        return info or {}
-
-
 @app.post("/api/save")
-async def save_with_tags(req: SaveRequest, background_tasks: BackgroundTasks):
+@limiter.limit("10/minute")
+async def save_with_tags(request: Request, req: SaveRequest, background_tasks: BackgroundTasks):
+    if not _validate_file_id(req.file_id):
+        raise HTTPException(status_code=400, detail="Invalid file ID")
+
     mp3_path = TEMP_DIR / f"{req.file_id}.mp3"
-    info_path = TEMP_DIR / f"{req.file_id}.json"
 
     if not mp3_path.exists():
         raise HTTPException(status_code=404, detail="File not found or expired")
 
-    # Write ID3 tags
     try:
         try:
             tags = ID3(str(mp3_path))
         except ID3NoHeaderError:
             tags = ID3()
 
-        tags.delall("TIT2")
-        tags.delall("TPE1")
-        tags.delall("TALB")
-        tags.delall("TPE2")
-        tags.delall("TDRC")
-        tags.delall("TRCK")
-        tags.delall("TCON")
-        tags.delall("APIC")
+        for frame in ("TIT2", "TPE1", "TALB", "TPE2", "TDRC", "TRCK", "TCON", "APIC"):
+            tags.delall(frame)
 
         t = req.tags
         if t.title:
@@ -191,9 +369,19 @@ async def save_with_tags(req: SaveRequest, background_tasks: BackgroundTasks):
         if t.genre:
             tags.add(TCON(encoding=3, text=t.genre))
         if t.album_art_base64:
-            art_data = base64.b64decode(t.album_art_base64)
-            # Ensure it's a valid JPEG
+            if len(t.album_art_base64) > MAX_ALBUM_ART_B64_BYTES:
+                raise HTTPException(status_code=400, detail="Album art too large (max ~5 MB)")
+            try:
+                art_data = base64.b64decode(t.album_art_base64, validate=True)
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid base64 album art data")
             img = Image.open(io.BytesIO(art_data))
+            if img.format not in ALLOWED_IMAGE_FORMATS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Album art must be one of: {', '.join(sorted(ALLOWED_IMAGE_FORMATS))}",
+                )
+            img.thumbnail((ALBUM_ART_MAX_DIM, ALBUM_ART_MAX_DIM))
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=90)
             tags.add(APIC(
@@ -205,32 +393,28 @@ async def save_with_tags(req: SaveRequest, background_tasks: BackgroundTasks):
             ))
 
         tags.save(str(mp3_path), v2_version=3)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write tags: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to write ID3 tags for file_id=%s", req.file_id)
+        raise HTTPException(status_code=500, detail="Failed to write tags. Please try again.")
 
     safe_filename = _safe_filename(req.filename or "download") + ".mp3"
+    encoded_filename = urlquote(safe_filename)
 
-    # Schedule cleanup after response is sent
     background_tasks.add_task(_cleanup_files, req.file_id)
 
     return FileResponse(
         path=str(mp3_path),
         media_type="audio/mpeg",
         filename=safe_filename,
-        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{safe_filename}"; '
+                f"filename*=UTF-8''{encoded_filename}"
+            )
+        },
     )
-
-
-def _safe_filename(name: str) -> str:
-    keep = set(" abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.()")
-    sanitized = "".join(c if c in keep else "_" for c in name).strip()
-    return sanitized[:100] or "download"
-
-
-def _cleanup_files(file_id: str):
-    for ext in [".mp3", ".json", ".webm", ".m4a", ".opus"]:
-        path = TEMP_DIR / f"{file_id}{ext}"
-        path.unlink(missing_ok=True)
 
 
 @app.get("/api/health")
