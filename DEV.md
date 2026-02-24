@@ -50,10 +50,25 @@ npx tsc --noEmit
 ### Running Both Together (Recommended)
 
 ```bash
-./start.sh
+./scripts/start.sh
 ```
 
 Starts the backend and frontend in parallel, prefixes their output with color-coded labels, and shuts both down cleanly on `Ctrl+C`.
+
+> `./start.sh` (root) is a forwarding shim kept for convenience — it just calls `scripts/start.sh`.
+
+### Running Tests
+
+```bash
+# Backend (pytest) + frontend unit/component (vitest) — no server needed
+./scripts/test.sh
+
+# Everything above + Playwright E2E (dev server must be running first)
+./scripts/test.sh --e2e
+
+# Playwright E2E only
+./scripts/test.sh --only-e2e
+```
 
 ### Running Separately (Development)
 
@@ -90,24 +105,40 @@ The Vite dev server proxies all `/api/*` requests to `http://localhost:8000`.
 
 ```
 YoutubeToMP3/
+├── scripts/
+│   ├── start.sh             # Start backend + frontend dev servers
+│   └── test.sh              # Run test suite (--e2e flag for Playwright)
+├── start.sh                 # Shim → scripts/start.sh (kept for convenience)
 ├── backend/
 │   ├── main.py              # FastAPI app — all routes and logic
 │   ├── requirements.txt     # Python dependencies
+│   ├── tests/
+│   │   ├── test_unit.py         # Pure helper function tests
+│   │   └── test_integration.py  # FastAPI endpoint tests (TestClient)
 │   ├── venv/                # Python virtual environment (not committed)
 │   └── temp/                # Temporary MP3 files (auto-cleaned, not committed)
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx          # Root component, step state machine
 │   │   ├── api.ts           # Fetch wrappers for backend API
+│   │   ├── api.test.ts      # Unit tests for api.ts
 │   │   ├── types.ts         # Shared TypeScript interfaces
 │   │   ├── index.css        # Tailwind entry point + theme tokens
+│   │   ├── test/
+│   │   │   └── setup.ts     # Vitest global test setup
 │   │   └── components/
-│   │       ├── DownloadForm.tsx   # Step 1: URL input + bitrate selection
-│   │       ├── LoadingState.tsx   # Step 2: Animated conversion progress
-│   │       ├── TagEditor.tsx      # Step 3: ID3 tag form + album art
-│   │       └── ErrorAlert.tsx     # Dismissable error banner
+│   │       ├── DownloadForm.tsx        # Step 1: URL input + bitrate selection
+│   │       ├── DownloadForm.test.tsx   # Component tests
+│   │       ├── LoadingState.tsx        # Step 2: Animated conversion progress
+│   │       ├── TagEditor.tsx           # Step 3: ID3 tag form + album art
+│   │       ├── TagEditor.test.tsx      # Component tests
+│   │       └── ErrorAlert.tsx          # Dismissable error banner
+│   ├── e2e/
+│   │   └── app.spec.ts      # Playwright end-to-end tests
 │   ├── index.html
 │   ├── vite.config.ts       # Vite + Tailwind + /api proxy config
+│   ├── vitest.config.ts     # Vitest test runner config
+│   ├── playwright.config.ts # Playwright E2E config
 │   ├── package.json
 │   └── tsconfig.json
 ├── README.md                # Public-facing documentation
@@ -187,7 +218,7 @@ Returns `{ "status": "ok" }`. Used for uptime monitoring.
 - Temp files are stored in `backend/temp/` and are cleaned up:
   - After each successful `/api/save` request (background task)
   - On server startup (files older than 1 hour)
-- CORS is currently restricted to `localhost:5173`. Update `allow_origins` in `main.py` before deploying to production.
+- CORS origins are configured via the `CORS_ORIGINS` environment variable (comma-separated). Copy `.env.example` to `.env` and set it to your production domain(s) before deploying. When unset, it defaults to `localhost:5173` (development only).
 - The backend uses `ID3v2.3` tags for maximum compatibility.
 
 ---

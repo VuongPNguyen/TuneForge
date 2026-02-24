@@ -12,6 +12,7 @@ export default function ErrorAlert({ message, onDismiss }: Props) {
       <p className="text-sm flex-1">{message}</p>
       <button
         onClick={onDismiss}
+        aria-label="Dismiss"
         className="text-red-400 hover:text-red-200 transition-colors flex-shrink-0 cursor-pointer"
       >
         <X className="w-4 h-4" />

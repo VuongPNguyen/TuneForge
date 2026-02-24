@@ -1,4 +1,5 @@
 import re
+import os
 import uuid
 import base64
 import asyncio
@@ -155,10 +156,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+_cors_env = os.getenv("CORS_ORIGINS", "").strip()
+CORS_ORIGINS: list[str] = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()]
+    if _cors_env
+    else ["http://localhost:5173", "http://127.0.0.1:5173"]
+)
+
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
