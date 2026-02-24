@@ -4,6 +4,8 @@ import base64
 import asyncio
 import logging
 import shutil
+import socket
+import ipaddress
 from pathlib import Path
 from typing import Optional
 from contextlib import asynccontextmanager
@@ -42,6 +44,19 @@ ALBUM_ART_MAX_DIM = 1000                         # Max px per side when embeddin
 MIN_FREE_DISK_BYTES = 1 * 1024 * 1024 * 1024    # Refuse downloads if <1 GB free
 MAX_CONCURRENT_DOWNLOADS = 5                     # Semaphore cap on parallel yt-dlp jobs
 ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP", "GIF"}
+MAX_FETCH_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+
+_PRIVATE_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
 
 ALLOWED_YT_HOSTNAMES = {
     "www.youtube.com",
@@ -172,6 +187,10 @@ class SaveRequest(BaseModel):
     file_id: str = Field(max_length=36)
     tags: ID3Tags
     filename: str = Field(default="download", max_length=255)
+
+
+class FetchImageRequest(BaseModel):
+    url: str = Field(max_length=2048)
 
 
 # --- Helpers --------------------------------------------------------------
@@ -415,6 +434,97 @@ async def save_with_tags(request: Request, req: SaveRequest, background_tasks: B
             )
         },
     )
+
+
+@app.post("/api/fetch-image")
+@limiter.limit("20/minute")
+async def fetch_image_url(request: Request, req: FetchImageRequest):
+    """Proxy-fetch an image URL on behalf of the client to avoid CORS issues."""
+    try:
+        parsed = urlparse(req.url)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid URL")
+
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="URL must use http or https")
+
+    hostname = parsed.hostname or ""
+    if not hostname:
+        raise HTTPException(status_code=400, detail="URL has no hostname")
+
+    # SSRF protection: resolve hostname off the event loop to avoid blocking it
+    try:
+        loop = asyncio.get_running_loop()
+        resolved_str = await loop.run_in_executor(None, socket.gethostbyname, hostname)
+        resolved_ip = ipaddress.ip_address(resolved_str)
+    except Exception as e:
+        logger.warning("fetch-image: DNS resolution failed for %s: %s", hostname, e)
+        raise HTTPException(status_code=400, detail="Could not resolve hostname")
+
+    if any(resolved_ip in net for net in _PRIVATE_NETWORKS):
+        raise HTTPException(status_code=400, detail="URL resolves to a private address")
+
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=15.0,
+            verify=True,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            },
+        ) as client:
+            resp = await client.get(req.url)
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=502, detail="Request timed out fetching the image URL")
+    except httpx.TooManyRedirects:
+        raise HTTPException(status_code=502, detail="Too many redirects following the image URL")
+    except httpx.SSLError as e:
+        logger.warning("fetch-image: SSL error for %s: %s", _safe_log_url(req.url), e)
+        raise HTTPException(status_code=502, detail="SSL certificate error fetching the image URL")
+    except Exception as e:
+        logger.warning("fetch-image: connection error for %s: %s", _safe_log_url(req.url), e)
+        raise HTTPException(status_code=502, detail="Could not connect to the image URL")
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Image server returned HTTP {resp.status_code}",
+        )
+
+    content_type = resp.headers.get("content-type", "").split(";")[0].strip()
+    if not content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"URL does not point to an image (content-type: {content_type or 'unknown'})",
+        )
+
+    data = resp.content
+    if len(data) > MAX_FETCH_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Image exceeds 10 MB size limit")
+
+    try:
+        img = Image.open(io.BytesIO(data))
+        if img.format not in ALLOWED_IMAGE_FORMATS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Image format not supported: {img.format}",
+            )
+        img.thumbnail((1000, 1000))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("fetch-image: PIL decode failed for %s: %s", _safe_log_url(req.url), e)
+        raise HTTPException(status_code=400, detail="Could not decode the image data")
+
+    return {"image_b64": b64, "mime_type": "image/jpeg"}
 
 
 @app.get("/api/health")

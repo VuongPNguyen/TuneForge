@@ -34,6 +34,21 @@ export async function saveWithTags(
   return res.blob();
 }
 
+export async function fetchImageFromUrl(url: string): Promise<{ image_b64: string; mime_type: string }> {
+  const res = await fetch('/api/fetch-image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(err.detail || `Server error ${res.status}`);
+  }
+
+  return res.json();
+}
+
 export function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
