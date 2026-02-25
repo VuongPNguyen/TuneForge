@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
 import {
   Music, User, Disc, Users, Calendar, Hash, Tag,
-  Image as ImageIcon, Upload, X, Download, RotateCcw, Loader2
+  Image as ImageIcon, Upload, X, Download, RotateCcw, Loader2,
+  Lock, Link2
 } from 'lucide-react';
 import type { DownloadMetadata, ID3Tags } from '../types';
 import { fetchImageFromUrl } from '../api';
@@ -32,6 +33,8 @@ const FIELDS: FieldConfig[] = [
   { key: 'genre', label: 'Genre', placeholder: 'e.g. Electronic', icon: <Tag className="w-4 h-4" /> },
 ];
 
+type MusicMode = 'covers' | 'singles' | 'albums';
+
 function formatDuration(seconds: number | null): string {
   if (!seconds) return '';
   const m = Math.floor(seconds / 60);
@@ -61,8 +64,57 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
   const [artUrl, setArtUrl] = useState('');
   const [artUrlError, setArtUrlError] = useState<string | null>(null);
 
+  const [activeTab, setActiveTab] = useState<'default' | 'music'>('default');
+  const [musicMode, setMusicMode] = useState<MusicMode | null>(null);
+
+  // True when a music mode is active that auto-computes certain fields
+  const isSmartMode = activeTab === 'music' && (musicMode === 'covers' || musicMode === 'singles');
+
   function handleField(key: keyof Omit<ID3Tags, 'album_art_base64'>, value: string) {
-    setTags((prev) => ({ ...prev, [key]: value }));
+    if (activeTab === 'music' && musicMode) {
+      setTags((prev) => {
+        const next = { ...prev, [key]: value };
+        if (musicMode === 'covers') {
+          if (key === 'album_artist') {
+            next.artist = value;
+            next.album = value ? `${value} Covers` : '';
+          }
+        } else if (musicMode === 'singles') {
+          if (key === 'title') {
+            next.album = value;
+          } else if (key === 'album_artist') {
+            next.artist = value;
+          }
+        }
+        return next;
+      });
+    } else {
+      setTags((prev) => ({ ...prev, [key]: value }));
+    }
+  }
+
+  function handleModeToggle(mode: MusicMode) {
+    if (mode === 'albums') return;
+
+    const newMode = musicMode === mode ? null : mode;
+    setMusicMode(newMode);
+
+    setTags((prev) => {
+      if (newMode === 'covers') {
+        return {
+          ...prev,
+          artist: prev.album_artist,
+          album: prev.album_artist ? `${prev.album_artist} Covers` : '',
+        };
+      }
+      if (newMode === 'singles') {
+        return {
+          ...prev,
+          album: prev.title,
+        };
+      }
+      return prev;
+    });
   }
 
   function applyImageFile(file: File) {
@@ -83,7 +135,6 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
   }
 
   function extractImageUrl(dataTransfer: DataTransfer): string | null {
-    // text/uri-list: one URL per line, lines starting with # are comments
     const uriList = dataTransfer.getData('text/uri-list');
     if (uriList) {
       const url = uriList.split('\n').map((l) => l.trim()).find(
@@ -91,7 +142,6 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
       );
       if (url) return url;
     }
-    // text/html: parse <img src="..."> from dragged HTML snippet
     const html = dataTransfer.getData('text/html');
     if (html) {
       const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
@@ -119,14 +169,12 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
     e.preventDefault();
     setIsDragOver(false);
 
-    // Prefer a directly dropped image file
     const files = Array.from(e.dataTransfer.files);
     const imageFile = files.find((f) =>
       /\.(png|jpe?g)$/i.test(f.name) || f.type.startsWith('image/')
     );
     if (imageFile) { applyImageFile(imageFile); return; }
 
-    // Fall back to extracting a URL from the dragged content
     const url = extractImageUrl(e.dataTransfer);
     if (url) await applyImageUrl(url);
   }
@@ -163,7 +211,7 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
 
   return (
     <div className="w-full max-w-2xl mx-auto">
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-bold text-white">Edit ID3 Tags</h2>
           <p className="text-slate-400 text-sm mt-1">Customize the metadata for your MP3 file</p>
@@ -179,6 +227,55 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
           New download
         </button>
       </div>
+
+      {/* Tab switcher */}
+      <div className="flex gap-1 p-1 rounded-xl bg-white/5 border border-white/8 mb-6">
+        {(['default', 'music'] as const).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setActiveTab(tab)}
+            disabled={isSaving}
+            className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-all capitalize cursor-pointer disabled:opacity-40
+              ${activeTab === tab
+                ? 'bg-white/10 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-300'
+              }`}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
+      {/* Music mode toggles */}
+      {activeTab === 'music' && (
+        <div className="flex gap-2 mb-6">
+          {(['covers', 'singles', 'albums'] as MusicMode[]).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => handleModeToggle(mode)}
+              disabled={isSaving || mode === 'albums'}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border
+                ${musicMode === mode
+                  ? 'bg-brand-600/30 border-brand-500/50 text-brand-300 cursor-pointer'
+                  : mode === 'albums'
+                  ? 'bg-white/3 border-white/5 text-slate-600 cursor-not-allowed'
+                  : 'bg-white/5 border-white/10 text-slate-400 hover:text-slate-300 hover:bg-white/8 cursor-pointer'
+                }`}
+            >
+              {mode === 'albums' ? (
+                <span className="flex items-center gap-1.5 capitalize">
+                  Albums
+                  <span className="text-[10px] text-slate-600 normal-case font-normal">Soon</span>
+                </span>
+              ) : (
+                <span className="capitalize">{mode}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Album Art */}
@@ -196,19 +293,15 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
             >
-              {/* Animated dashed border on drag */}
               {isDragOver && (
                 <div className="absolute inset-[3px] rounded-lg border-2 border-dashed border-brand-400/70 pointer-events-none z-10" />
               )}
-
-              {/* URL fetch spinner */}
               {isUrlFetching && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-slate-900/80 rounded-xl z-20">
                   <Loader2 className="w-6 h-6 text-brand-400 animate-spin" />
-                  <span className="text-[10px] font-semibold text-brand-300">Fetching…</span>
+                  <span className="text-[10px] font-semibold text-brand-300">Fetching...</span>
                 </div>
               )}
-
               {artPreview ? (
                 <>
                   <img src={artPreview} alt="Album art" className="w-full h-full object-cover rounded-xl" />
@@ -244,8 +337,6 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
                 <p className="text-xs text-slate-600 mt-1">YouTube thumbnail was removed</p>
               )}
             </div>
-
-            {/* File upload + remove buttons */}
             <div className="flex gap-2">
               <button
                 type="button"
@@ -268,8 +359,6 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
                 </button>
               )}
             </div>
-
-            {/* URL input row */}
             <div className="flex flex-col gap-1">
               <div className="flex gap-2">
                 <input
@@ -277,7 +366,7 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
                   value={artUrl}
                   onChange={(e) => { setArtUrl(e.target.value); setArtUrlError(null); }}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyImageUrl(artUrl); } }}
-                  placeholder="Paste image URL…"
+                  placeholder="Paste image URL..."
                   disabled={isUrlFetching}
                   className={`flex-1 min-w-0 px-3 py-1.5 rounded-lg bg-white/5 border text-white text-xs
                     placeholder-slate-600 outline-none focus:bg-white/8 transition-all
@@ -320,28 +409,47 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
 
         {/* Tag fields */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {FIELDS.map((field) => (
-            <div
-              key={field.key}
-              className={field.key === 'title' ? 'sm:col-span-2' : ''}
-            >
-              <label className="flex items-center gap-2 text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">
-                <span className="text-slate-500">{field.icon}</span>
-                {field.label}
-              </label>
-              <input
-                type={field.type || 'text'}
-                value={tags[field.key]}
-                onChange={(e) => handleField(field.key, e.target.value)}
-                placeholder={field.placeholder}
-                maxLength={field.maxLength}
-                disabled={isSaving}
-                className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-slate-600
-                  text-sm outline-none focus:border-brand-500/60 focus:bg-white/8 transition-all
-                  disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-            </div>
-          ))}
+          {FIELDS.map((field) => {
+            const isLocked = field.key === 'album' && isSmartMode;
+            const isArtistSynced = field.key === 'artist' && isSmartMode;
+
+            return (
+              <div
+                key={field.key}
+                className={field.key === 'title' ? 'sm:col-span-2' : ''}
+              >
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">
+                  <span className="text-slate-500">{field.icon}</span>
+                  {field.label}
+                  {isLocked && (
+                    <span className="ml-auto flex items-center gap-1 text-slate-600 normal-case font-normal tracking-normal">
+                      <Lock className="w-3 h-3" />
+                      <span className="text-[10px]">auto</span>
+                    </span>
+                  )}
+                  {isArtistSynced && (
+                    <span className="ml-auto flex items-center gap-1 text-slate-600 normal-case font-normal tracking-normal">
+                      <Link2 className="w-3 h-3" />
+                      <span className="text-[10px]">follows Album Artist</span>
+                    </span>
+                  )}
+                </label>
+                <input
+                  type={field.type || 'text'}
+                  value={tags[field.key]}
+                  onChange={(e) => handleField(field.key, e.target.value)}
+                  placeholder={field.placeholder}
+                  maxLength={field.maxLength}
+                  disabled={isSaving || isLocked}
+                  className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all
+                    ${isLocked
+                      ? 'bg-white/3 border-white/5 text-slate-400 cursor-not-allowed placeholder-slate-700'
+                      : 'bg-white/5 border-white/10 text-white placeholder-slate-600 focus:border-brand-500/60 focus:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed'
+                    }`}
+                />
+              </div>
+            );
+          })}
         </div>
 
         {/* Output filename preview */}
@@ -361,7 +469,7 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
           {isSaving ? (
             <>
               <Loader2 className="w-5 h-5 animate-spin" />
-              Saving…
+              Saving...
             </>
           ) : (
             <>
