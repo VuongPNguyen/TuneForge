@@ -416,3 +416,29 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# --- Project-specific ---
+
+# Python virtual environment
+venv/
+
+# Temporary converted audio files (kept as an empty tracked directory via .gitkeep)
+backend/temp/*
+!backend/temp/.gitkeep
+
+# Frontend production build
+frontend/dist/
+
+# Python test / coverage artefacts
+.pytest_cache/
+htmlcov/
+*.egg-info/
+.coverage
+
+# Environment variable files
+.env
+.env.local
+.env.*.local
+
+# Developer-only notes (not for public repositories)
+DEV.md
