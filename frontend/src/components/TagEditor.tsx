@@ -3,10 +3,10 @@ import {
   Music, User, Disc, Users, Calendar, Hash, Tag,
   Image as ImageIcon, Upload, X, Download, RotateCcw, Loader2,
   Lock, Link2, Wand2, BookmarkPlus, Check, AlertCircle,
-  ArrowRight, Plus, Trash2, ChevronDown,
+  ArrowRight, Plus, Trash2, ChevronDown, Sparkles,
 } from 'lucide-react';
 import type { DownloadMetadata, ID3Tags } from '../types';
-import { fetchImageFromUrl } from '../api';
+import { fetchImageFromUrl, aiAutofill } from '../api';
 import {
   getArtistMappings, putArtistMapping, deleteArtistMapping,
   getAlbums, deleteAlbum, putAlbum, albumKey, blobToBase64,
@@ -85,6 +85,12 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
   const [albumSaveStatus, setAlbumSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [autofillDismissed, setAutofillDismissed] = useState(false);
   const [liveAutofilled, setLiveAutofilled] = useState(false);
+
+  // ── AI autofill state ──────────────────────────────────────────────────────
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiFilledFields, setAiFilledFields] = useState<string[]>([]);
+  const [aiNoticeDismissed, setAiNoticeDismissed] = useState(false);
 
   // ── Settings state (loaded when Music tab is opened) ──────────────────────
   const [mappings, setMappings] = useState<ArtistMapping[]>([]);
@@ -384,6 +390,67 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
     onSave(tags);
   }
 
+  async function handleAiAutofill() {
+    setIsAiLoading(true);
+    setAiError(null);
+    setAiFilledFields([]);
+    setAiNoticeDismissed(false);
+    try {
+      const suggestions = await aiAutofill({
+        title: tags.title,
+        artist: tags.artist,
+        album: tags.album,
+        album_artist: tags.album_artist,
+        year: tags.year,
+        track_number: tags.track_number,
+        genre: tags.genre,
+        youtube_title: metadata.title,
+      });
+
+      const changed: string[] = [];
+
+      // Title: always apply if AI returned a different (cleaner) value
+      const newTags: typeof tags = { ...tags };
+      if (suggestions.title && suggestions.title !== tags.title) {
+        newTags.title = suggestions.title;
+        changed.push('title');
+      }
+
+      // All other text fields: only fill if currently empty
+      const emptyFillKeys = ['artist', 'album', 'album_artist', 'year', 'track_number', 'genre'] as const;
+      for (const key of emptyFillKeys) {
+        if (!tags[key] && suggestions[key]) {
+          newTags[key] = suggestions[key];
+          changed.push(key);
+        }
+      }
+
+      setTags(newTags);
+
+      // Album art: fetch the URL if provided and no art is currently set
+      if (suggestions.album_art_url && !tags.album_art_base64) {
+        try {
+          const { image_b64, mime_type } = await fetchImageFromUrl(suggestions.album_art_url);
+          setTags((prev) => ({ ...prev, album_art_base64: image_b64 }));
+          setArtPreview(`data:${mime_type};base64,${image_b64}`);
+          changed.push('album_art');
+        } catch {
+          // silently ignore — URL may have been hallucinated or unreachable
+        }
+      }
+
+      if (changed.length > 0) {
+        setAiFilledFields(changed);
+      } else {
+        setAiError('No improvements found — all fields are already complete.');
+      }
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'AI autofill failed');
+    } finally {
+      setIsAiLoading(false);
+    }
+  }
+
   const safeFilename = [tags.artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -654,7 +721,7 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
         </div>
       )}
 
-      {/* Autofill notice */}
+      {/* Album autofill notice */}
       {(albumAutofilled || liveAutofilled) && !autofillDismissed && (
         <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-brand-600/10 border border-brand-500/20 mb-6">
           <Wand2 className="w-4 h-4 text-brand-400 flex-shrink-0" />
@@ -666,6 +733,43 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
             onClick={() => setAutofillDismissed(true)}
             className="text-brand-500 hover:text-brand-300 transition-colors cursor-pointer"
             aria-label="Dismiss autofill notice"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* AI autofill success notice */}
+      {aiFilledFields.length > 0 && !aiNoticeDismissed && (
+        <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-violet-600/10 border border-violet-500/20 mb-6">
+          <Sparkles className="w-4 h-4 text-violet-400 flex-shrink-0" />
+          <span className="text-sm text-violet-300 flex-1">
+            AI filled:{' '}
+            {aiFilledFields
+              .map((k) => k === 'album_art' ? 'Album Art' : (FIELDS.find((f) => f.key === k)?.label ?? k))
+              .join(', ')}
+          </span>
+          <button
+            type="button"
+            onClick={() => setAiNoticeDismissed(true)}
+            className="text-violet-500 hover:text-violet-300 transition-colors cursor-pointer"
+            aria-label="Dismiss AI autofill notice"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* AI autofill error notice */}
+      {aiError && (
+        <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-red-600/10 border border-red-500/20 mb-6">
+          <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+          <span className="text-sm text-red-300 flex-1">{aiError}</span>
+          <button
+            type="button"
+            onClick={() => setAiError(null)}
+            className="text-red-500 hover:text-red-300 transition-colors cursor-pointer"
+            aria-label="Dismiss error"
           >
             <X className="w-4 h-4" />
           </button>
@@ -802,6 +906,28 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
           className="hidden"
           onChange={handleArtUpload}
         />
+
+        {/* Tag fields header with AI Autofill */}
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Tag fields</p>
+          <div className="flex flex-col items-end gap-1">
+            <button
+              type="button"
+              onClick={handleAiAutofill}
+              disabled={isSaving || isAiLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600/15 border border-violet-500/25
+                text-violet-300 hover:bg-violet-600/25 hover:border-violet-500/40 transition-all text-xs font-medium
+                cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {isAiLoading
+                ? <Loader2 className="w-3 h-3 animate-spin" />
+                : <Sparkles className="w-3 h-3" />
+              }
+              {isAiLoading ? 'Thinking…' : 'AI Autofill'}
+            </button>
+            <p className="text-[10px] text-slate-600">Powered by Google Search</p>
+          </div>
+        </div>
 
         {/* Tag fields */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

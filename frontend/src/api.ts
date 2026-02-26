@@ -53,6 +53,43 @@ export function cancelDownload(fileId: string): void {
   navigator.sendBeacon(`/api/cancel/${fileId}`);
 }
 
+export interface AiAutofillPayload {
+  title: string;
+  artist: string;
+  album: string;
+  album_artist: string;
+  year: string;
+  track_number: string;
+  genre: string;
+  youtube_title: string;
+}
+
+export interface AiAutofillSuggestions {
+  title: string;
+  artist: string;
+  album: string;
+  album_artist: string;
+  year: string;
+  track_number: string;
+  genre: string;
+  album_art_url: string;
+}
+
+export async function aiAutofill(data: AiAutofillPayload): Promise<AiAutofillSuggestions> {
+  const res = await fetch('/api/ai-autofill', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(err.detail || `Server error ${res.status}`);
+  }
+
+  return res.json();
+}
+
 export function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

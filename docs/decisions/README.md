@@ -11,6 +11,7 @@ This directory contains ADRs (Architecture Decision Records) documenting signifi
 | [0003](./0003-single-admin-account-model.md) | Single admin account with server-side persistence; general users keep IndexedDB | Accepted |
 | [0004](./0004-sqlite-on-persistent-volume.md) | SQLite on a persistent volume for admin config storage | Accepted |
 | [0005](./0005-fly-io-deployment.md) | Deploy on Fly.io as a single container | Accepted |
+| [0006](./0006-gemini-for-ai-autofill.md) | Use Google Gemini for AI Autofill | Accepted |
 
 ## Format
 
