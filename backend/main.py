@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlparse, quote as urlquote
 
 import httpx
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -362,7 +362,7 @@ async def download_video(request: Request, req: DownloadRequest):
 
 @app.post("/api/save")
 @limiter.limit("10/minute")
-async def save_with_tags(request: Request, req: SaveRequest, background_tasks: BackgroundTasks):
+async def save_with_tags(request: Request, req: SaveRequest):
     if not _validate_file_id(req.file_id):
         raise HTTPException(status_code=400, detail="Invalid file ID")
 
@@ -428,8 +428,6 @@ async def save_with_tags(request: Request, req: SaveRequest, background_tasks: B
 
     safe_filename = _safe_filename(req.filename or "download") + ".mp3"
     encoded_filename = urlquote(safe_filename)
-
-    background_tasks.add_task(_cleanup_files, req.file_id)
 
     return FileResponse(
         path=str(mp3_path),
@@ -533,6 +531,15 @@ async def fetch_image_url(request: Request, req: FetchImageRequest):
         raise HTTPException(status_code=400, detail="Could not decode the image data")
 
     return {"image_b64": b64, "mime_type": "image/jpeg"}
+
+
+@app.post("/api/cancel/{file_id}")
+@limiter.limit("20/minute")
+async def cancel_download(request: Request, file_id: str):
+    if not _validate_file_id(file_id):
+        raise HTTPException(status_code=400, detail="Invalid file ID")
+    _cleanup_files(file_id)
+    return {"status": "ok"}
 
 
 @app.get("/api/health")

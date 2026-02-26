@@ -9,7 +9,7 @@ import type { DownloadMetadata, ID3Tags } from '../types';
 import { fetchImageFromUrl } from '../api';
 import {
   getArtistMappings, putArtistMapping, deleteArtistMapping,
-  getAlbums, deleteAlbum, putAlbum, albumKey,
+  getAlbums, deleteAlbum, putAlbum, albumKey, blobToBase64,
   type ArtistMapping, type AlbumRecord,
 } from '../db';
 
@@ -84,11 +84,19 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
   const [musicMode, setMusicMode] = useState<MusicMode | null>(null);
   const [albumSaveStatus, setAlbumSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [autofillDismissed, setAutofillDismissed] = useState(false);
+  const [liveAutofilled, setLiveAutofilled] = useState(false);
 
   // ── Settings state (loaded when Music tab is opened) ──────────────────────
   const [mappings, setMappings] = useState<ArtistMapping[]>([]);
   const [albums, setAlbums] = useState<AlbumRecord[]>([]);
   const [albumArtUrls, setAlbumArtUrls] = useState<Record<string, string>>({});
+  // Tracks the album key most recently auto-applied; seeded when albumAutofilled
+  // is already true on mount so we don't re-fire for the initial load-time autofill.
+  const lastAppliedAlbumKey = useRef<string | null>(
+    albumAutofilled && metadata.album_artist && metadata.album
+      ? albumKey(metadata.album_artist, metadata.album)
+      : null
+  );
   const [mappingsExpanded, setMappingsExpanded] = useState(false);
   const [albumsExpanded, setAlbumsExpanded] = useState(false);
   const [displayEdits, setDisplayEdits] = useState<Record<string, string>>({});
@@ -98,6 +106,11 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
 
   // True when a music mode is active that auto-computes certain fields
   const isSmartMode = activeTab === 'music' && (musicMode === 'covers' || musicMode === 'singles');
+
+  // Load albums on mount so live matching works before the Music tab is opened
+  useEffect(() => {
+    getAlbums().then(setAlbums);
+  }, []);
 
   // ── Load settings whenever the Music tab is entered ────────────────────────
   useEffect(() => {
@@ -111,6 +124,39 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
     setAddMappingError(null);
     setDisplayEdits({});
   }, [activeTab]);
+
+  // ── Live album matching: auto-apply when artist + album match a saved entry ─
+  useEffect(() => {
+    if (!tags.album_artist || !tags.album) {
+      lastAppliedAlbumKey.current = null;
+      return;
+    }
+    const key = albumKey(tags.album_artist, tags.album);
+    if (key === lastAppliedAlbumKey.current) return;
+    const match = albums.find((a) => a.id === key);
+    if (!match) {
+      lastAppliedAlbumKey.current = null;
+      return;
+    }
+    lastAppliedAlbumKey.current = key;
+    (async () => {
+      let artBase64: string | null = null;
+      let preview: string | null = null;
+      if (match.art) {
+        artBase64 = await blobToBase64(match.art);
+        preview = `data:image/jpeg;base64,${artBase64}`;
+      }
+      setTags((prev) => ({
+        ...prev,
+        genre: match.genre || prev.genre,
+        year: match.year || prev.year,
+        ...(artBase64 ? { album_art_base64: artBase64 } : {}),
+      }));
+      if (preview) setArtPreview(preview);
+      setLiveAutofilled(true);
+      setAutofillDismissed(false);
+    })();
+  }, [tags.album_artist, tags.album, albums]);
 
   // Create / revoke object URLs for saved album art thumbnails
   useEffect(() => {
@@ -311,6 +357,26 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
   async function handleDeleteAlbum(id: string) {
     await deleteAlbum(id);
     setAlbums((prev) => prev.filter((a) => a.id !== id));
+  }
+
+  async function handleApplyAlbum(album: AlbumRecord) {
+    let artBase64: string | null = tags.album_art_base64;
+    let preview: string | null = artPreview;
+
+    if (album.art) {
+      artBase64 = await blobToBase64(album.art);
+      preview = `data:image/jpeg;base64,${artBase64}`;
+    }
+
+    setTags((prev) => ({
+      ...prev,
+      album_artist: album.album_artist,
+      album: album.album,
+      genre: album.genre ?? prev.genre,
+      year: album.year ?? prev.year,
+      album_art_base64: artBase64,
+    }));
+    setArtPreview(preview);
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -561,6 +627,16 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
                         </div>
                         <button
                           type="button"
+                          onClick={() => handleApplyAlbum(album)}
+                          className="flex items-center gap-1 px-2 py-1 rounded-md bg-brand-600/20 border border-brand-500/30
+                            text-brand-300 hover:bg-brand-600/30 transition-all text-xs font-medium cursor-pointer flex-shrink-0"
+                          aria-label={`Apply album ${album.album}`}
+                        >
+                          <Wand2 className="w-3 h-3" />
+                          Apply
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => handleDeleteAlbum(album.id)}
                           className="text-slate-600 hover:text-red-400 transition-colors cursor-pointer flex-shrink-0"
                           aria-label={`Delete saved album ${album.album}`}
@@ -579,7 +655,7 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
       )}
 
       {/* Autofill notice */}
-      {albumAutofilled && !autofillDismissed && (
+      {(albumAutofilled || liveAutofilled) && !autofillDismissed && (
         <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-brand-600/10 border border-brand-500/20 mb-6">
           <Wand2 className="w-4 h-4 text-brand-400 flex-shrink-0" />
           <span className="text-sm text-brand-300 flex-1">

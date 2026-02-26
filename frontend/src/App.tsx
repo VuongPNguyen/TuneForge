@@ -4,7 +4,7 @@ import DownloadForm from './components/DownloadForm';
 import LoadingState from './components/LoadingState';
 import TagEditor from './components/TagEditor';
 import ErrorAlert from './components/ErrorAlert';
-import { downloadVideo, saveWithTags, triggerDownload } from './api';
+import { downloadVideo, saveWithTags, triggerDownload, cancelDownload } from './api';
 import { lookupArtist, lookupAlbum, blobToBase64 } from './db';
 import type { AppStep, DownloadMetadata, ID3Tags } from './types';
 
@@ -14,6 +14,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [albumAutofilled, setAlbumAutofilled] = useState(false);
+  const [savedFile, setSavedFile] = useState<{ blob: Blob; filename: string; tags: ID3Tags } | null>(null);
 
   async function handleDownload(url: string, bitrate: number) {
     setError(null);
@@ -50,12 +51,21 @@ export default function App() {
 
   async function handleSave(tags: ID3Tags) {
     if (!metadata) return;
+
+    if (savedFile && JSON.stringify(savedFile.tags) === JSON.stringify(tags)) {
+      triggerDownload(savedFile.blob, savedFile.filename);
+      return;
+    }
+
+    setSavedFile(null);
     setIsSaving(true);
     setError(null);
     try {
       const filename = [tags.artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
       const blob = await saveWithTags(metadata.file_id, tags, filename);
-      triggerDownload(blob, filename + '.mp3');
+      const fullFilename = filename + '.mp3';
+      setSavedFile({ blob, filename: fullFilename, tags });
+      triggerDownload(blob, fullFilename);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed');
     } finally {
@@ -64,11 +74,13 @@ export default function App() {
   }
 
   function handleReset() {
+    if (metadata) cancelDownload(metadata.file_id);
     setStep('input');
     setMetadata(null);
     setError(null);
     setIsSaving(false);
     setAlbumAutofilled(false);
+    setSavedFile(null);
   }
 
   return (

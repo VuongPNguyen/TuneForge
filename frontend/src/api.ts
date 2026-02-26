@@ -49,6 +49,10 @@ export async function fetchImageFromUrl(url: string): Promise<{ image_b64: strin
   return res.json();
 }
 
+export function cancelDownload(fileId: string): void {
+  navigator.sendBeacon(`/api/cancel/${fileId}`);
+}
+
 export function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
