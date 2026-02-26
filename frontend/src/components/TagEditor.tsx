@@ -891,25 +891,37 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
         )}
 
         {/* Download button */}
-        <button
-          type="submit"
-          disabled={isSaving}
-          className="w-full py-4 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-40 disabled:cursor-not-allowed
-            text-white font-semibold text-base transition-all duration-150 shadow-lg shadow-brand-600/25
-            hover:shadow-brand-500/30 active:scale-[0.99] cursor-pointer flex items-center justify-center gap-3"
-        >
-          {isSaving ? (
-            <>
-              <Loader2 className="w-5 h-5 animate-spin" />
-              Saving...
-            </>
-          ) : (
-            <>
-              <Download className="w-5 h-5" />
-              Save & Download MP3
-            </>
-          )}
-        </button>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onReset}
+            disabled={isSaving}
+            className="flex items-center gap-2 px-4 py-4 rounded-xl bg-white/5 border border-white/10
+              text-slate-400 hover:text-white hover:bg-white/8 transition-all text-sm cursor-pointer disabled:opacity-40"
+          >
+            <RotateCcw className="w-4 h-4" />
+            New download
+          </button>
+          <button
+            type="submit"
+            disabled={isSaving}
+            className="flex-1 py-4 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-40 disabled:cursor-not-allowed
+              text-white font-semibold text-base transition-all duration-150 shadow-lg shadow-brand-600/25
+              hover:shadow-brand-500/30 active:scale-[0.99] cursor-pointer flex items-center justify-center gap-3"
+          >
+            {isSaving ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Download className="w-5 h-5" />
+                Save & Download MP3
+              </>
+            )}
+          </button>
+        </div>
       </form>
     </div>
   );
