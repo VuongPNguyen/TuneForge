@@ -5,6 +5,7 @@ import LoadingState from './components/LoadingState';
 import TagEditor from './components/TagEditor';
 import ErrorAlert from './components/ErrorAlert';
 import { downloadVideo, saveWithTags, triggerDownload } from './api';
+import { lookupArtist, lookupAlbum, blobToBase64 } from './db';
 import type { AppStep, DownloadMetadata, ID3Tags } from './types';
 
 export default function App() {
@@ -12,12 +13,33 @@ export default function App() {
   const [metadata, setMetadata] = useState<DownloadMetadata | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [albumAutofilled, setAlbumAutofilled] = useState(false);
 
   async function handleDownload(url: string, bitrate: number) {
     setError(null);
     setStep('downloading');
+    setAlbumAutofilled(false);
     try {
       const data = await downloadVideo(url, bitrate);
+
+      // Apply artist name mappings to both artist and album_artist fields
+      const artistDisplay = await lookupArtist(data.artist);
+      if (artistDisplay) data.artist = artistDisplay;
+
+      const albumArtistDisplay = await lookupArtist(data.album_artist);
+      if (albumArtistDisplay) data.album_artist = albumArtistDisplay;
+
+      // Apply album autofill (genre, year, art) if a saved album matches
+      const albumRecord = await lookupAlbum(data.album_artist, data.album);
+      if (albumRecord) {
+        data.genre = albumRecord.genre;
+        data.year = albumRecord.year;
+        if (albumRecord.art) {
+          data.thumbnail_b64 = await blobToBase64(albumRecord.art);
+        }
+        setAlbumAutofilled(true);
+      }
+
       setMetadata(data);
       setStep('tagging');
     } catch (err) {
@@ -46,6 +68,7 @@ export default function App() {
     setMetadata(null);
     setError(null);
     setIsSaving(false);
+    setAlbumAutofilled(false);
   }
 
   return (
@@ -94,6 +117,7 @@ export default function App() {
               onSave={handleSave}
               isSaving={isSaving}
               onReset={handleReset}
+              albumAutofilled={albumAutofilled}
             />
           )}
         </div>

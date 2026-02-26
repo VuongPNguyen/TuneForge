@@ -1,17 +1,24 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import {
   Music, User, Disc, Users, Calendar, Hash, Tag,
   Image as ImageIcon, Upload, X, Download, RotateCcw, Loader2,
-  Lock, Link2
+  Lock, Link2, Wand2, BookmarkPlus, Check, AlertCircle,
+  ArrowRight, Plus, Trash2, ChevronDown,
 } from 'lucide-react';
 import type { DownloadMetadata, ID3Tags } from '../types';
 import { fetchImageFromUrl } from '../api';
+import {
+  getArtistMappings, putArtistMapping, deleteArtistMapping,
+  getAlbums, deleteAlbum, putAlbum, albumKey,
+  type ArtistMapping, type AlbumRecord,
+} from '../db';
 
 interface Props {
   metadata: DownloadMetadata;
   onSave: (tags: ID3Tags) => void;
   isSaving: boolean;
   onReset: () => void;
+  albumAutofilled?: boolean;
 }
 
 interface FieldConfig {
@@ -34,6 +41,13 @@ const FIELDS: FieldConfig[] = [
 ];
 
 type MusicMode = 'covers' | 'singles' | 'albums';
+type ActiveTab = 'default' | 'music';
+
+const MODE_DESCRIPTIONS: Record<MusicMode, string> = {
+  covers: 'Artist and album auto-sync to the album artist — e.g. "tripleS Covers"',
+  singles: 'Album title mirrors the track title; artist follows album artist',
+  albums: 'Bookmark genre, year and art so they autofill on future downloads',
+};
 
 function formatDuration(seconds: number | null): string {
   if (!seconds) return '';
@@ -42,7 +56,8 @@ function formatDuration(seconds: number | null): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props) {
+export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAutofilled }: Props) {
+  // ── Tag state ──────────────────────────────────────────────────────────────
   const [tags, setTags] = useState<ID3Tags>({
     title: metadata.title || '',
     artist: metadata.artist || '',
@@ -64,12 +79,48 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
   const [artUrl, setArtUrl] = useState('');
   const [artUrlError, setArtUrlError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'default' | 'music'>('default');
+  // ── Tab / mode state ───────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<ActiveTab>('default');
   const [musicMode, setMusicMode] = useState<MusicMode | null>(null);
+  const [albumSaveStatus, setAlbumSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [autofillDismissed, setAutofillDismissed] = useState(false);
+
+  // ── Settings state (loaded when Music tab is opened) ──────────────────────
+  const [mappings, setMappings] = useState<ArtistMapping[]>([]);
+  const [albums, setAlbums] = useState<AlbumRecord[]>([]);
+  const [albumArtUrls, setAlbumArtUrls] = useState<Record<string, string>>({});
+  const [mappingsExpanded, setMappingsExpanded] = useState(false);
+  const [albumsExpanded, setAlbumsExpanded] = useState(false);
+  const [displayEdits, setDisplayEdits] = useState<Record<string, string>>({});
+  const [newRaw, setNewRaw] = useState('');
+  const [newDisplay, setNewDisplay] = useState('');
+  const [addMappingError, setAddMappingError] = useState<string | null>(null);
 
   // True when a music mode is active that auto-computes certain fields
   const isSmartMode = activeTab === 'music' && (musicMode === 'covers' || musicMode === 'singles');
 
+  // ── Load settings whenever the Music tab is entered ────────────────────────
+  useEffect(() => {
+    if (activeTab !== 'music') return;
+    Promise.all([getArtistMappings(), getAlbums()]).then(([m, a]) => {
+      setMappings(m);
+      setAlbums(a);
+    });
+    setNewRaw('');
+    setNewDisplay('');
+    setAddMappingError(null);
+    setDisplayEdits({});
+  }, [activeTab]);
+
+  // Create / revoke object URLs for saved album art thumbnails
+  useEffect(() => {
+    const urls: Record<string, string> = {};
+    albums.forEach((a) => { if (a.art) urls[a.id] = URL.createObjectURL(a.art); });
+    setAlbumArtUrls(urls);
+    return () => { Object.values(urls).forEach(URL.revokeObjectURL); };
+  }, [albums]);
+
+  // ── Tag field handlers ─────────────────────────────────────────────────────
   function handleField(key: keyof Omit<ID3Tags, 'album_art_base64'>, value: string) {
     if (activeTab === 'music' && musicMode) {
       setTags((prev) => {
@@ -94,10 +145,11 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
   }
 
   function handleModeToggle(mode: MusicMode) {
-    if (mode === 'albums') return;
-
     const newMode = musicMode === mode ? null : mode;
     setMusicMode(newMode);
+    setAlbumSaveStatus('idle');
+
+    if (mode === 'albums') return;
 
     setTags((prev) => {
       if (newMode === 'covers') {
@@ -108,21 +160,18 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
         };
       }
       if (newMode === 'singles') {
-        return {
-          ...prev,
-          album: prev.title,
-        };
+        return { ...prev, album: prev.title };
       }
       return prev;
     });
   }
 
+  // ── Album art handlers ─────────────────────────────────────────────────────
   function applyImageFile(file: File) {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
-      const b64 = dataUrl.split(',')[1];
-      setTags((prev) => ({ ...prev, album_art_base64: b64 }));
+      setTags((prev) => ({ ...prev, album_art_base64: dataUrl.split(',')[1] }));
       setArtPreview(dataUrl);
     };
     reader.readAsDataURL(file);
@@ -168,13 +217,9 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
   async function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setIsDragOver(false);
-
     const files = Array.from(e.dataTransfer.files);
-    const imageFile = files.find((f) =>
-      /\.(png|jpe?g)$/i.test(f.name) || f.type.startsWith('image/')
-    );
+    const imageFile = files.find((f) => /\.(png|jpe?g)$/i.test(f.name) || f.type.startsWith('image/'));
     if (imageFile) { applyImageFile(imageFile); return; }
-
     const url = extractImageUrl(e.dataTransfer);
     if (url) await applyImageUrl(url);
   }
@@ -202,6 +247,72 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
     }
   }
 
+  // ── Save album handler ─────────────────────────────────────────────────────
+  async function handleSaveAlbum() {
+    if (!tags.album_artist || !tags.album) return;
+    setAlbumSaveStatus('saving');
+    try {
+      let artBlob: Blob | null = null;
+      if (tags.album_art_base64) {
+        const res = await fetch(`data:image/jpeg;base64,${tags.album_art_base64}`);
+        artBlob = await res.blob();
+      }
+      await putAlbum({
+        id: albumKey(tags.album_artist, tags.album),
+        album_artist: tags.album_artist,
+        album: tags.album,
+        genre: tags.genre,
+        year: tags.year,
+        art: artBlob,
+      });
+      setAlbumSaveStatus('saved');
+      // Refresh the saved albums list so the new entry appears immediately
+      setAlbums(await getAlbums());
+      setTimeout(() => setAlbumSaveStatus('idle'), 3000);
+    } catch {
+      setAlbumSaveStatus('error');
+      setTimeout(() => setAlbumSaveStatus('idle'), 3000);
+    }
+  }
+
+  // ── Settings handlers ──────────────────────────────────────────────────────
+  async function handleDisplayBlur(raw: string) {
+    const edited = displayEdits[raw];
+    if (edited === undefined) return;
+    const trimmed = edited.trim();
+    if (trimmed && trimmed !== mappings.find((m) => m.raw === raw)?.display) {
+      await putArtistMapping({ raw, display: trimmed });
+      setMappings((prev) => prev.map((m) => m.raw === raw ? { ...m, display: trimmed } : m));
+    }
+    setDisplayEdits((prev) => { const next = { ...prev }; delete next[raw]; return next; });
+  }
+
+  async function handleDeleteMapping(raw: string) {
+    await deleteArtistMapping(raw);
+    setMappings((prev) => prev.filter((m) => m.raw !== raw));
+  }
+
+  async function handleAddMapping() {
+    const raw = newRaw.trim();
+    const display = newDisplay.trim();
+    if (!raw) { setAddMappingError('Channel name is required'); return; }
+    if (!display) { setAddMappingError('Display name is required'); return; }
+    setAddMappingError(null);
+    await putArtistMapping({ raw, display });
+    setMappings((prev) => {
+      const exists = prev.find((m) => m.raw === raw);
+      if (exists) return prev.map((m) => m.raw === raw ? { raw, display } : m);
+      return [...prev, { raw, display }];
+    });
+    setNewRaw('');
+    setNewDisplay('');
+  }
+
+  async function handleDeleteAlbum(id: string) {
+    await deleteAlbum(id);
+    setAlbums((prev) => prev.filter((a) => a.id !== id));
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     onSave(tags);
@@ -209,8 +320,10 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
 
   const safeFilename = [tags.artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="w-full max-w-2xl mx-auto">
+      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-bold text-white">Edit ID3 Tags</h2>
@@ -230,7 +343,7 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
 
       {/* Tab switcher */}
       <div className="flex gap-1 p-1 rounded-xl bg-white/5 border border-white/8 mb-6">
-        {(['default', 'music'] as const).map((tab) => (
+        {(['default', 'music'] as ActiveTab[]).map((tab) => (
           <button
             key={tab}
             type="button"
@@ -247,36 +360,243 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
         ))}
       </div>
 
-      {/* Music mode toggles */}
+      {/* ── Music tab extras (mode + settings) ──────────────────────────────── */}
       {activeTab === 'music' && (
-        <div className="flex gap-2 mb-6">
-          {(['covers', 'singles', 'albums'] as MusicMode[]).map((mode) => (
+        <div className="space-y-2 mb-6">
+
+          {/* Mode card */}
+          <div className="p-4 rounded-xl bg-white/3 border border-white/8 space-y-3">
+            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Mode</p>
+            <div className="flex gap-2">
+              {(['covers', 'singles', 'albums'] as MusicMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => handleModeToggle(mode)}
+                  disabled={isSaving}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border cursor-pointer capitalize
+                    ${musicMode === mode
+                      ? 'bg-brand-600/30 border-brand-500/50 text-brand-300'
+                      : 'bg-white/5 border-white/10 text-slate-400 hover:text-slate-300 hover:bg-white/8'
+                    }
+                    disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+            {musicMode && (
+              <p className="text-xs text-slate-500 leading-relaxed">
+                {MODE_DESCRIPTIONS[musicMode]}
+              </p>
+            )}
+          </div>
+
+          {/* Artist Mappings — collapsible */}
+          <div className="rounded-xl bg-white/3 border border-white/8 overflow-hidden">
             <button
-              key={mode}
               type="button"
-              onClick={() => handleModeToggle(mode)}
-              disabled={isSaving || mode === 'albums'}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border
-                ${musicMode === mode
-                  ? 'bg-brand-600/30 border-brand-500/50 text-brand-300 cursor-pointer'
-                  : mode === 'albums'
-                  ? 'bg-white/3 border-white/5 text-slate-600 cursor-not-allowed'
-                  : 'bg-white/5 border-white/10 text-slate-400 hover:text-slate-300 hover:bg-white/8 cursor-pointer'
-                }`}
+              onClick={() => setMappingsExpanded((v) => !v)}
+              className="w-full flex items-center gap-2.5 px-4 py-3 text-left hover:bg-white/3 transition-colors cursor-pointer"
             >
-              {mode === 'albums' ? (
-                <span className="flex items-center gap-1.5 capitalize">
-                  Albums
-                  <span className="text-[10px] text-slate-600 normal-case font-normal">Soon</span>
+              <User className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+              <span className="text-sm font-medium text-slate-300 flex-1">Artist Name Mappings</span>
+              {mappings.length > 0 && (
+                <span className="text-[10px] font-semibold bg-brand-600/25 text-brand-400 px-1.5 py-0.5 rounded-full">
+                  {mappings.length}
                 </span>
-              ) : (
-                <span className="capitalize">{mode}</span>
               )}
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-slate-500 flex-shrink-0 transition-transform duration-200
+                  ${mappingsExpanded ? 'rotate-180' : ''}`}
+              />
             </button>
-          ))}
+
+            {mappingsExpanded && (
+              <div className="px-4 pb-4 space-y-3 border-t border-white/6">
+                <p className="text-xs text-slate-500 leading-relaxed pt-3">
+                  Automatically replaces a channel name with your preferred display name before the
+                  tag editor opens.
+                </p>
+
+                {mappings.length === 0 ? (
+                  <p className="text-sm text-slate-600">No mappings saved yet.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {mappings.map((m) => (
+                      <div
+                        key={m.raw}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/3 border border-white/6"
+                      >
+                        <span className="text-sm text-slate-400 min-w-0 truncate flex-1" title={m.raw}>
+                          {m.raw}
+                        </span>
+                        <ArrowRight className="w-3 h-3 text-slate-600 flex-shrink-0" />
+                        <input
+                          type="text"
+                          value={displayEdits[m.raw] ?? m.display}
+                          onChange={(e) =>
+                            setDisplayEdits((prev) => ({ ...prev, [m.raw]: e.target.value }))
+                          }
+                          onBlur={() => handleDisplayBlur(m.raw)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                          className="flex-1 min-w-0 bg-transparent text-sm text-white outline-none
+                            border-b border-transparent hover:border-white/20 focus:border-brand-500/60
+                            transition-colors px-0.5"
+                          aria-label={`Display name for ${m.raw}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteMapping(m.raw)}
+                          className="text-slate-600 hover:text-red-400 transition-colors cursor-pointer flex-shrink-0"
+                          aria-label={`Delete mapping for ${m.raw}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Add form */}
+                <div className="space-y-1.5 pt-1">
+                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Add mapping</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={newRaw}
+                      onChange={(e) => { setNewRaw(e.target.value); setAddMappingError(null); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleAddMapping(); }}
+                      placeholder="Channel name (exact)"
+                      className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10
+                        text-white text-sm placeholder-slate-600 outline-none
+                        focus:border-brand-500/60 focus:bg-white/8 transition-all"
+                    />
+                    <ArrowRight className="w-3 h-3 text-slate-600 flex-shrink-0" />
+                    <input
+                      type="text"
+                      value={newDisplay}
+                      onChange={(e) => { setNewDisplay(e.target.value); setAddMappingError(null); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleAddMapping(); }}
+                      placeholder="Display name"
+                      className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10
+                        text-white text-sm placeholder-slate-600 outline-none
+                        focus:border-brand-500/60 focus:bg-white/8 transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddMapping}
+                      disabled={!newRaw.trim() || !newDisplay.trim()}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-brand-600/20 border border-brand-500/30
+                        text-brand-300 hover:bg-brand-600/30 transition-all text-sm font-medium
+                        cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Add
+                    </button>
+                  </div>
+                  {addMappingError && <p className="text-xs text-red-400">{addMappingError}</p>}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Saved Albums — collapsible */}
+          <div className="rounded-xl bg-white/3 border border-white/8 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setAlbumsExpanded((v) => !v)}
+              className="w-full flex items-center gap-2.5 px-4 py-3 text-left hover:bg-white/3 transition-colors cursor-pointer"
+            >
+              <Disc className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+              <span className="text-sm font-medium text-slate-300 flex-1">Saved Albums</span>
+              {albums.length > 0 && (
+                <span className="text-[10px] font-semibold bg-brand-600/25 text-brand-400 px-1.5 py-0.5 rounded-full">
+                  {albums.length}
+                </span>
+              )}
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-slate-500 flex-shrink-0 transition-transform duration-200
+                  ${albumsExpanded ? 'rotate-180' : ''}`}
+              />
+            </button>
+
+            {albumsExpanded && (
+              <div className="px-4 pb-4 space-y-3 border-t border-white/6">
+                <p className="text-xs text-slate-500 leading-relaxed pt-3">
+                  When a download's album artist and album title match a saved entry, genre, year
+                  and art are autofilled automatically. Use Albums mode above to save an album.
+                </p>
+
+                {albums.length === 0 ? (
+                  <p className="text-sm text-slate-600">No albums saved yet.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {albums.map((album) => (
+                      <div
+                        key={album.id}
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-white/3 border border-white/6"
+                      >
+                        <div className="w-9 h-9 rounded-lg flex-shrink-0 overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center">
+                          {albumArtUrls[album.id] ? (
+                            <img
+                              src={albumArtUrls[album.id]}
+                              alt={album.album}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <Disc className="w-3.5 h-3.5 text-slate-600" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-white truncate">{album.album}</p>
+                          <p className="text-xs text-slate-500 truncate">
+                            {album.album_artist}
+                            {(album.genre || album.year) && (
+                              <span className="text-slate-600">
+                                {' · '}{[album.genre, album.year].filter(Boolean).join(' · ')}
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAlbum(album.id)}
+                          className="text-slate-600 hover:text-red-400 transition-colors cursor-pointer flex-shrink-0"
+                          aria-label={`Delete saved album ${album.album}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
         </div>
       )}
 
+      {/* Autofill notice */}
+      {albumAutofilled && !autofillDismissed && (
+        <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-brand-600/10 border border-brand-500/20 mb-6">
+          <Wand2 className="w-4 h-4 text-brand-400 flex-shrink-0" />
+          <span className="text-sm text-brand-300 flex-1">
+            Genre, year and album art autofilled from saved album
+          </span>
+          <button
+            type="button"
+            onClick={() => setAutofillDismissed(true)}
+            className="text-brand-500 hover:text-brand-300 transition-colors cursor-pointer"
+            aria-label="Dismiss autofill notice"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* ── Tag form ─────────────────────────────────────────────────────────── */}
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Album Art */}
         <div className="flex gap-5 p-5 rounded-2xl bg-white/3 border border-white/8">
@@ -414,10 +734,7 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
             const isArtistSynced = field.key === 'artist' && isSmartMode;
 
             return (
-              <div
-                key={field.key}
-                className={field.key === 'title' ? 'sm:col-span-2' : ''}
-              >
+              <div key={field.key} className={field.key === 'title' ? 'sm:col-span-2' : ''}>
                 <label className="flex items-center gap-2 text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">
                   <span className="text-slate-500">{field.icon}</span>
                   {field.label}
@@ -458,7 +775,46 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset }: Props
           <p className="text-sm text-slate-300 font-mono truncate">{safeFilename}.mp3</p>
         </div>
 
-        {/* Save button */}
+        {/* Save album — only shown in albums mode */}
+        {activeTab === 'music' && musicMode === 'albums' && (
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/3 border border-white/8">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-slate-300 truncate">
+                {tags.album_artist && tags.album
+                  ? <><span className="text-white">{tags.album_artist}</span> — {tags.album}</>
+                  : <span className="text-slate-500">Fill in Album Artist and Album to save</span>
+                }
+              </p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Saves genre, year and art for future autofill
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleSaveAlbum}
+              disabled={!tags.album_artist || !tags.album || albumSaveStatus === 'saving' || isSaving}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium
+                transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0
+                ${albumSaveStatus === 'saved'
+                  ? 'bg-emerald-600/20 border-emerald-500/30 text-emerald-300'
+                  : albumSaveStatus === 'error'
+                  ? 'bg-red-600/20 border-red-500/30 text-red-300'
+                  : 'bg-brand-600/20 border-brand-500/30 text-brand-300 hover:bg-brand-600/30'
+                }`}
+            >
+              {albumSaveStatus === 'saving' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {albumSaveStatus === 'saved' && <Check className="w-3.5 h-3.5" />}
+              {albumSaveStatus === 'error' && <AlertCircle className="w-3.5 h-3.5" />}
+              {albumSaveStatus === 'idle' && <BookmarkPlus className="w-3.5 h-3.5" />}
+              {albumSaveStatus === 'saving' ? 'Saving…'
+                : albumSaveStatus === 'saved' ? 'Saved!'
+                : albumSaveStatus === 'error' ? 'Failed'
+                : 'Save album'}
+            </button>
+          </div>
+        )}
+
+        {/* Download button */}
         <button
           type="submit"
           disabled={isSaving}
