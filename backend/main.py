@@ -1,5 +1,6 @@
 import re
 import os
+import json
 import uuid
 import base64
 import asyncio
@@ -31,6 +32,7 @@ import io
 # Limit PIL decompression-bomb risk (~50 megapixels)
 Image.MAX_IMAGE_PIXELS = 50_000_000
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TEMP_DIR = Path(__file__).parent / "temp"
@@ -82,6 +84,12 @@ ALLOWED_THUMB_HOSTNAMES = {
 
 UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_API_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models"
+    "/gemini-2.5-pro:generateContent"
 )
 
 # -------------------------------------------------------------------------
@@ -199,6 +207,17 @@ class SaveRequest(BaseModel):
 
 class FetchImageRequest(BaseModel):
     url: str = Field(max_length=2048)
+
+
+class AiAutofillRequest(BaseModel):
+    title: str = Field(default="", max_length=500)
+    artist: str = Field(default="", max_length=500)
+    album: str = Field(default="", max_length=500)
+    album_artist: str = Field(default="", max_length=500)
+    year: str = Field(default="", max_length=4)
+    track_number: str = Field(default="", max_length=20)
+    genre: str = Field(default="", max_length=100)
+    youtube_title: str = Field(default="", max_length=500)
 
 
 # --- Helpers --------------------------------------------------------------
@@ -531,6 +550,145 @@ async def fetch_image_url(request: Request, req: FetchImageRequest):
         raise HTTPException(status_code=400, detail="Could not decode the image data")
 
     return {"image_b64": b64, "mime_type": "image/jpeg"}
+
+
+@app.post("/api/ai-autofill")
+@limiter.limit("10/minute")
+async def ai_autofill(request: Request, req: AiAutofillRequest):
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="AI autofill is not configured. Add a GEMINI_API_KEY to the server environment.",
+        )
+
+    prompt = f"""You are a music metadata expert with comprehensive knowledge of music releases worldwide, including K-pop, J-pop, and international music.
+
+Your primary reference sources are **Apple Music** and **Spotify** — use the metadata exactly as it appears on those platforms (title casing, artist name formatting, album name, track number, release year, genre). Cross-reference both services to corroborate the information before returning it.
+
+Given information about a YouTube video download, return clean and accurate ID3 tag values as JSON.
+
+Current metadata:
+- YouTube title: "{req.youtube_title}"
+- Title: "{req.title}"
+- Artist: "{req.artist}"
+- Album: "{req.album}"
+- Album Artist: "{req.album_artist}"
+- Year: "{req.year}"
+- Track Number: "{req.track_number}"
+- Genre: "{req.genre}"
+
+Instructions — follow each one carefully:
+
+1. **title**: Always return a clean song title using this strict priority order:
+   a. Official English title as listed on Apple Music / Spotify (e.g. "Are You Alive" not "깨어")
+   b. Official romanized title if no English title exists on those platforms (e.g. "Kkaeeo")
+   c. Unofficial/best-effort romanization as a last resort
+   In all cases, strip ALL YouTube noise: "(Official Video)", "[Official Audio]", "(Lyric Video)", "(4K)", "HD", "MV", "M/V", "Official MV", "Official", "(HQ)", "(Performance Video)", "(Visualizer)", "(Live)", etc. Keep featuring artists.
+
+2. **album**: Use the official album or EP name exactly as it appears on Apple Music or Spotify. Return "" only if the track is not found on either platform.
+
+3. **track_number**: The track's position on the album as listed on Apple Music or Spotify, in the format "N" or "N/Total" (e.g. "3" or "3/12"). Return "" only if unknown.
+
+4. **artist / album_artist**: Use the exact artist name formatting from Apple Music or Spotify (e.g. correct capitalisation, spacing). Return unchanged if already correct.
+
+5. **year**: The original release year as a 4-digit string, matching Apple Music or Spotify. Prefer single/album release date over YouTube upload date. Return "" if unknown.
+
+6. **genre**: Use the genre tag from Apple Music if available (e.g. "K-Pop", "Synth-pop", "Hip-Hop/Rap"). Return "" if unknown.
+
+7. **album_art_url**: Return "" — do not provide image URLs.
+
+Return ONLY a JSON object with exactly these keys: title, artist, album, album_artist, year, track_number, genre, album_art_url. No explanation."""
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{GEMINI_API_URL}?key={GEMINI_API_KEY}",
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "tools": [{"google_search": {}}],
+                    "generationConfig": {
+                        "temperature": 0.1,
+                        "maxOutputTokens": 2048,
+                    },
+                },
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=502, detail="AI request timed out")
+    except Exception:
+        logger.exception("ai-autofill: network error calling Gemini")
+        raise HTTPException(status_code=502, detail="Failed to connect to AI service")
+
+    if resp.status_code in (401, 403):
+        raise HTTPException(
+            status_code=503,
+            detail="AI autofill is not configured (invalid API key)",
+        )
+    if resp.status_code != 200:
+        logger.warning("ai-autofill: Gemini returned %s: %s", resp.status_code, resp.text[:200])
+        raise HTTPException(status_code=502, detail=f"AI service error ({resp.status_code})")
+
+    try:
+        data = resp.json()
+        logger.info("ai-autofill: full Gemini response: %s", json.dumps(data, ensure_ascii=False))
+
+        candidate = data["candidates"][0]
+        finish_reason = candidate.get("finishReason", "")
+        logger.info("ai-autofill: finishReason=%s", finish_reason)
+
+        content = candidate.get("content", {})
+        parts = content.get("parts")
+
+        if not parts:
+            # Some finish reasons (e.g. SAFETY, RECITATION) return no parts
+            logger.warning("ai-autofill: no parts in response — finishReason=%s content=%s", finish_reason, content)
+            raise ValueError(f"Gemini returned no content parts (finishReason={finish_reason})")
+
+        # Thinking models prepend a thought part — skip it and use the first real text part
+        text = next(
+            (p["text"] for p in parts if not p.get("thought") and "text" in p),
+            None,
+        )
+        if text is None:
+            raise ValueError("No usable text part found in Gemini response")
+
+        logger.info("ai-autofill: raw text from Gemini: %r", text)
+
+        # Strip markdown code fences the model may wrap around the JSON
+        text = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text.strip())
+        # Fallback: extract the first {...} block if still not clean JSON
+        if not text.startswith("{"):
+            m = re.search(r"\{.*\}", text, re.DOTALL)
+            if m:
+                text = m.group(0)
+        # Gemini sometimes escapes single quotes as \' which is invalid JSON
+        text = text.replace("\\'", "'")
+
+        logger.info("ai-autofill: cleaned text before json.loads: %r", text)
+        suggestions = json.loads(text)
+    except Exception:
+        logger.exception("ai-autofill: failed to parse Gemini response")
+        raise HTTPException(status_code=502, detail="Failed to parse AI response")
+
+    def _s(val, max_len: int = 500) -> str:
+        return str(val).strip()[:max_len] if val else ""
+
+    raw_year = _s(suggestions.get("year"), 4)
+    year = raw_year if re.match(r"^\d{4}$", raw_year) else ""
+
+    raw_track = _s(suggestions.get("track_number"), 20)
+    track_number = raw_track if re.match(r"^\d+(/\d+)?$", raw_track) else ""
+
+    return {
+        "title": _s(suggestions.get("title"), 500),
+        "artist": _s(suggestions.get("artist"), 500),
+        "album": _s(suggestions.get("album"), 500),
+        "album_artist": _s(suggestions.get("album_artist"), 500),
+        "year": year,
+        "track_number": track_number,
+        "genre": _s(suggestions.get("genre"), 100),
+        "album_art_url": _s(suggestions.get("album_art_url"), 2048),
+    }
 
 
 @app.post("/api/cancel/{file_id}")

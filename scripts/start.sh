@@ -28,6 +28,15 @@ trap cleanup EXIT INT TERM
 
 echo -e "${CYAN}Starting YT to MP3…${RESET}\n"
 
+# ── Load .env if present ──────────────────────────────────────────────────────
+if [ -f "$ROOT/.env" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$ROOT/.env"
+  set +a
+  echo -e "${CYAN}[env]${RESET} Loaded .env"
+fi
+
 # ── Backend ──────────────────────────────────────────────────────────────────
 echo -e "${CYAN}[backend]${RESET} Activating virtual environment…"
 if [ ! -d "$ROOT/backend/venv" ]; then
