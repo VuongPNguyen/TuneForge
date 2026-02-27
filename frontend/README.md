@@ -1,6 +1,6 @@
-# Frontend — YT to MP3
+# Frontend — YT to Music
 
-React 19 + TypeScript + Vite frontend for the YT to MP3 converter.
+React 19 + TypeScript + Vite frontend for the YT to Music converter.
 
 For full project documentation and setup instructions, see the [root README](../README.md).
 

@@ -4,7 +4,7 @@ import { Music } from 'lucide-react';
 const STEPS = [
   { label: 'Fetching video info…', duration: 2000 },
   { label: 'Downloading audio stream…', duration: 6000 },
-  { label: 'Converting to MP3…', duration: 4000 },
+  { label: 'Converting to music…', duration: 4000 },
   { label: 'Finalizing file…', duration: 2000 },
 ];
 

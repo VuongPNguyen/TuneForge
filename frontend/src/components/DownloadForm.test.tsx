@@ -16,7 +16,7 @@ function setup(props?: { isLoading?: boolean }) {
 describe('DownloadForm rendering', () => {
   it('shows the page heading', () => {
     setup();
-    expect(screen.getByRole('heading', { name: /youtube to mp3/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /tuneforge/i })).toBeInTheDocument();
   });
 
   it('renders the URL input', () => {
@@ -50,14 +50,14 @@ describe('DownloadForm rendering', () => {
 describe('DownloadForm URL validation', () => {
   it('disables the submit button when the URL is empty', () => {
     setup();
-    expect(screen.getByRole('button', { name: /convert to mp3/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /convert to music/i })).toBeDisabled();
   });
 
   it('shows an error for a non-YouTube URL', async () => {
     const user = userEvent.setup();
     setup();
     await user.type(screen.getByPlaceholderText(/https:\/\/www\.youtube\.com/i), 'https://vimeo.com/123');
-    await user.click(screen.getByRole('button', { name: /convert to mp3/i }));
+    await user.click(screen.getByRole('button', { name: /convert to music/i }));
     expect(screen.getByText(/valid youtube video url/i)).toBeInTheDocument();
   });
 
@@ -66,7 +66,7 @@ describe('DownloadForm URL validation', () => {
     setup();
     const input = screen.getByPlaceholderText(/https:\/\/www\.youtube\.com/i);
     await user.type(input, 'https://vimeo.com/123');
-    await user.click(screen.getByRole('button', { name: /convert to mp3/i }));
+    await user.click(screen.getByRole('button', { name: /convert to music/i }));
     expect(screen.getByText(/valid youtube video url/i)).toBeInTheDocument();
     await user.type(input, 'h');
     expect(screen.queryByText(/valid youtube video url/i)).not.toBeInTheDocument();
@@ -85,7 +85,7 @@ describe('DownloadForm submission', () => {
       screen.getByPlaceholderText(/https:\/\/www\.youtube\.com/i),
       'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
     );
-    await user.click(screen.getByRole('button', { name: /convert to mp3/i }));
+    await user.click(screen.getByRole('button', { name: /convert to music/i }));
     expect(onSubmit).toHaveBeenCalledOnce();
     expect(onSubmit).toHaveBeenCalledWith('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 256);
   });
@@ -98,7 +98,7 @@ describe('DownloadForm submission', () => {
       screen.getByPlaceholderText(/https:\/\/www\.youtube\.com/i),
       'https://youtu.be/dQw4w9WgXcQ',
     );
-    await user.click(screen.getByRole('button', { name: /convert to mp3/i }));
+    await user.click(screen.getByRole('button', { name: /convert to music/i }));
     expect(onSubmit).toHaveBeenCalledWith('https://youtu.be/dQw4w9WgXcQ', 320);
   });
 
@@ -106,7 +106,7 @@ describe('DownloadForm submission', () => {
     const user = userEvent.setup();
     const { onSubmit } = setup();
     await user.type(screen.getByPlaceholderText(/https:\/\/www\.youtube\.com/i), 'not-a-url');
-    await user.click(screen.getByRole('button', { name: /convert to mp3/i }));
+    await user.click(screen.getByRole('button', { name: /convert to music/i }));
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });

@@ -8,10 +8,15 @@ import {
 import type { DownloadMetadata, ID3Tags } from '../types';
 import { fetchImageFromUrl, aiAutofill } from '../api';
 import {
+  putAdminMapping, deleteAdminMapping, putAdminAlbum, deleteAdminAlbum,
+  getAdminMappings, getAdminAlbums,
+} from '../api';
+import {
   getArtistMappings, putArtistMapping, deleteArtistMapping,
   getAlbums, deleteAlbum, putAlbum, albumKey, blobToBase64,
   type ArtistMapping, type AlbumRecord,
 } from '../db';
+import { safeFilename as sanitizeFilename } from '../utils/filename';
 
 interface Props {
   metadata: DownloadMetadata;
@@ -19,6 +24,13 @@ interface Props {
   isSaving: boolean;
   onReset: () => void;
   albumAutofilled?: boolean;
+  isAdmin?: boolean;
+  adminToken?: string;
+  initialMappings?: ArtistMapping[];
+  initialAlbums?: AlbumRecord[];
+  onMappingsChange?: (mappings: ArtistMapping[]) => void;
+  onAlbumsChange?: (albums: AlbumRecord[]) => void;
+  aiAvailable?: boolean;
 }
 
 interface FieldConfig {
@@ -56,7 +68,12 @@ function formatDuration(seconds: number | null): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAutofilled }: Props) {
+export default function TagEditor({
+  metadata, onSave, isSaving, onReset, albumAutofilled,
+  isAdmin, adminToken, initialMappings, initialAlbums,
+  onMappingsChange, onAlbumsChange,
+  aiAvailable = true,
+}: Props) {
   // ── Tag state ──────────────────────────────────────────────────────────────
   const [tags, setTags] = useState<ID3Tags>({
     title: metadata.title || '',
@@ -93,8 +110,8 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
   const [aiNoticeDismissed, setAiNoticeDismissed] = useState(false);
 
   // ── Settings state (loaded when Music tab is opened) ──────────────────────
-  const [mappings, setMappings] = useState<ArtistMapping[]>([]);
-  const [albums, setAlbums] = useState<AlbumRecord[]>([]);
+  const [mappings, setMappings] = useState<ArtistMapping[]>(initialMappings ?? []);
+  const [albums, setAlbums] = useState<AlbumRecord[]>(initialAlbums ?? []);
   const [albumArtUrls, setAlbumArtUrls] = useState<Record<string, string>>({});
   // Tracks the album key most recently auto-applied; seeded when albumAutofilled
   // is already true on mount so we don't re-fire for the initial load-time autofill.
@@ -115,21 +132,31 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
 
   // Load albums on mount so live matching works before the Music tab is opened
   useEffect(() => {
+    if (isAdmin) return; // seeded from initialAlbums prop
     getAlbums().then(setAlbums);
-  }, []);
+  }, [isAdmin]);
 
   // ── Load settings whenever the Music tab is entered ────────────────────────
   useEffect(() => {
     if (activeTab !== 'music') return;
-    Promise.all([getArtistMappings(), getAlbums()]).then(([m, a]) => {
-      setMappings(m);
-      setAlbums(a);
-    });
+    if (isAdmin && adminToken) {
+      Promise.all([getAdminMappings(adminToken), getAdminAlbums(adminToken)]).then(([m, a]) => {
+        setMappings(m);
+        setAlbums(a);
+        onMappingsChange?.(m);
+        onAlbumsChange?.(a);
+      });
+    } else if (!isAdmin) {
+      Promise.all([getArtistMappings(), getAlbums()]).then(([m, a]) => {
+        setMappings(m);
+        setAlbums(a);
+      });
+    }
     setNewRaw('');
     setNewDisplay('');
     setAddMappingError(null);
     setDisplayEdits({});
-  }, [activeTab]);
+  }, [activeTab, isAdmin, adminToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Live album matching: auto-apply when artist + album match a saved entry ─
   useEffect(() => {
@@ -309,17 +336,24 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
         const res = await fetch(`data:image/jpeg;base64,${tags.album_art_base64}`);
         artBlob = await res.blob();
       }
-      await putAlbum({
+      const record: AlbumRecord = {
         id: albumKey(tags.album_artist, tags.album),
         album_artist: tags.album_artist,
         album: tags.album,
         genre: tags.genre,
         year: tags.year,
         art: artBlob,
-      });
+      };
+      if (isAdmin && adminToken) {
+        await putAdminAlbum(adminToken, record);
+        const next = await getAdminAlbums(adminToken);
+        setAlbums(next);
+        onAlbumsChange?.(next);
+      } else {
+        await putAlbum(record);
+        setAlbums(await getAlbums());
+      }
       setAlbumSaveStatus('saved');
-      // Refresh the saved albums list so the new entry appears immediately
-      setAlbums(await getAlbums());
       setTimeout(() => setAlbumSaveStatus('idle'), 3000);
     } catch {
       setAlbumSaveStatus('error');
@@ -333,15 +367,27 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
     if (edited === undefined) return;
     const trimmed = edited.trim();
     if (trimmed && trimmed !== mappings.find((m) => m.raw === raw)?.display) {
-      await putArtistMapping({ raw, display: trimmed });
-      setMappings((prev) => prev.map((m) => m.raw === raw ? { ...m, display: trimmed } : m));
+      if (isAdmin && adminToken) {
+        await putAdminMapping(adminToken, { raw, display: trimmed });
+      } else {
+        await putArtistMapping({ raw, display: trimmed });
+      }
+      const next = mappings.map((m) => m.raw === raw ? { ...m, display: trimmed } : m);
+      setMappings(next);
+      onMappingsChange?.(next);
     }
-    setDisplayEdits((prev) => { const next = { ...prev }; delete next[raw]; return next; });
+    setDisplayEdits((prev) => { const n = { ...prev }; delete n[raw]; return n; });
   }
 
   async function handleDeleteMapping(raw: string) {
-    await deleteArtistMapping(raw);
-    setMappings((prev) => prev.filter((m) => m.raw !== raw));
+    if (isAdmin && adminToken) {
+      await deleteAdminMapping(adminToken, raw);
+    } else {
+      await deleteArtistMapping(raw);
+    }
+    const next = mappings.filter((m) => m.raw !== raw);
+    setMappings(next);
+    onMappingsChange?.(next);
   }
 
   async function handleAddMapping() {
@@ -350,19 +396,29 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
     if (!raw) { setAddMappingError('Channel name is required'); return; }
     if (!display) { setAddMappingError('Display name is required'); return; }
     setAddMappingError(null);
-    await putArtistMapping({ raw, display });
-    setMappings((prev) => {
-      const exists = prev.find((m) => m.raw === raw);
-      if (exists) return prev.map((m) => m.raw === raw ? { raw, display } : m);
-      return [...prev, { raw, display }];
-    });
+    if (isAdmin && adminToken) {
+      await putAdminMapping(adminToken, { raw, display });
+    } else {
+      await putArtistMapping({ raw, display });
+    }
+    const next = mappings.find((m) => m.raw === raw)
+      ? mappings.map((m) => m.raw === raw ? { raw, display } : m)
+      : [...mappings, { raw, display }];
+    setMappings(next);
+    onMappingsChange?.(next);
     setNewRaw('');
     setNewDisplay('');
   }
 
   async function handleDeleteAlbum(id: string) {
-    await deleteAlbum(id);
-    setAlbums((prev) => prev.filter((a) => a.id !== id));
+    if (isAdmin && adminToken) {
+      await deleteAdminAlbum(adminToken, id);
+    } else {
+      await deleteAlbum(id);
+    }
+    const next = albums.filter((a) => a.id !== id);
+    setAlbums(next);
+    onAlbumsChange?.(next);
   }
 
   async function handleApplyAlbum(album: AlbumRecord) {
@@ -451,7 +507,8 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
     }
   }
 
-  const safeFilename = [tags.artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
+  const rawFilename = [tags.artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
+  const safeFilename = sanitizeFilename(rawFilename);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -460,7 +517,7 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-bold text-white">Edit ID3 Tags</h2>
-          <p className="text-slate-400 text-sm mt-1">Customize the metadata for your MP3 file</p>
+          <p className="text-slate-400 text-sm mt-1">Customize the metadata for your music file</p>
         </div>
         <button
           type="button"
@@ -914,18 +971,24 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
             <button
               type="button"
               onClick={handleAiAutofill}
-              disabled={isSaving || isAiLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600/15 border border-violet-500/25
-                text-violet-300 hover:bg-violet-600/25 hover:border-violet-500/40 transition-all text-xs font-medium
-                cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={isSaving || isAiLoading || !aiAvailable}
+              title={!aiAvailable ? 'AI Autofill is not configured — add a GEMINI_API_KEY to the server' : undefined}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-xs font-medium
+                cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed
+                ${aiAvailable
+                  ? 'bg-violet-600/15 border-violet-500/25 text-violet-300 hover:bg-violet-600/25 hover:border-violet-500/40'
+                  : 'bg-white/5 border-white/10 text-slate-500'
+                }`}
             >
               {isAiLoading
                 ? <Loader2 className="w-3 h-3 animate-spin" />
                 : <Sparkles className="w-3 h-3" />
               }
-              {isAiLoading ? 'Thinking…' : 'AI Autofill'}
+              {isAiLoading ? 'Thinking…' : aiAvailable ? 'AI Autofill' : 'AI Unavailable'}
             </button>
-            <p className="text-[10px] text-slate-600">Powered by Google Search</p>
+            <p className="text-[10px] text-slate-600">
+              {aiAvailable ? 'Powered by Google Search' : 'GEMINI_API_KEY not configured'}
+            </p>
           </div>
         </div>
 
@@ -1043,7 +1106,7 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
             ) : (
               <>
                 <Download className="w-5 h-5" />
-                Save & Download MP3
+                Save & Download
               </>
             )}
           </button>

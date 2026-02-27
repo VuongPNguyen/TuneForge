@@ -426,6 +426,11 @@ venv/
 backend/temp/*
 !backend/temp/.gitkeep
 
+# Admin config (contains server-persisted mappings/albums; not committed)
+# In dev this lives at <project-root>/data/; on Fly it's the mounted volume at /app/data/
+data/*
+!data/.gitkeep
+
 # Frontend production build
 frontend/dist/
 

@@ -1,0 +1,33 @@
+.git
+.gitignore
+.env
+.env.*
+
+# Python artefacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/venv/
+.pytest_cache/
+htmlcov/
+*.egg-info/
+.coverage
+backend/temp/
+data/
+
+# Node artefacts
+**/node_modules/
+frontend/dist/
+
+# Test outputs
+frontend/test-results/
+frontend/e2e/
+
+# Docs & dev notes
+docs/
+*.md
+DEV.md
+
+# IDE files
+.vscode/
+.idea/

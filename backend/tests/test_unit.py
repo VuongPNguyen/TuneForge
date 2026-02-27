@@ -72,24 +72,22 @@ class TestValidateFileId:
 # ---------------------------------------------------------------------------
 
 class TestSafeFilename:
-    def test_normal_ascii_name(self):
-        assert _safe_filename("Artist - Title") == "Artist_-_Title"
+    def test_preserves_spaces(self):
+        assert _safe_filename("Artist - Title") == "Artist - Title"
 
     def test_preserves_allowed_chars(self):
         result = _safe_filename("Track (feat. Someone) 01")
         assert "(" in result
         assert ")" in result
         assert "." in result
-        assert "0" in result
+        assert " " in result
 
-    def test_strips_path_separators(self):
-        result = _safe_filename("hello/world")
-        assert "/" not in result
-
-    def test_strips_angle_brackets(self):
+    def test_strips_only_disallowed_chars(self):
+        assert _safe_filename("hello/world") == "helloworld"
         result = _safe_filename("title<script>")
         assert "<" not in result
         assert ">" not in result
+        assert result == "titlescript"
 
     def test_truncates_at_100_chars(self):
         assert len(_safe_filename("a" * 200)) == 100
@@ -97,17 +95,12 @@ class TestSafeFilename:
     def test_empty_string_returns_download(self):
         assert _safe_filename("") == "download"
 
-    def test_all_special_chars_replaced_with_underscores(self):
-        # Non-allowed chars become underscores; "download" fallback only fires on empty input
-        result = _safe_filename("///???")
-        assert set(result) == {"_"}
+    def test_whitespace_only_returns_download(self):
+        assert _safe_filename("  ") == "download"
 
-    def test_spaces_replaced_with_underscores(self):
-        result = _safe_filename("  ")
-        assert set(result) == {"_"}
-
-    def test_only_empty_string_falls_back_to_download(self):
-        assert _safe_filename("") == "download"
+    def test_strips_backslash_colon_star_etc(self):
+        result = _safe_filename('a\\b/c:d*e?f"g<h>i|j')
+        assert result == "abcdefghij"
 
 
 # ---------------------------------------------------------------------------

@@ -46,7 +46,7 @@ async function mockAllApis(page: Page) {
 test.describe('App shell', () => {
   test('shows the app header and brand name', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText('YT to MP3')).toBeVisible();
+    await expect(page.getByText('YT to Music')).toBeVisible();
   });
 
   test('shows the footer legal notice', async ({ page }) => {
@@ -64,7 +64,7 @@ test.describe('DownloadForm', () => {
   });
 
   test('renders the heading and URL input', async ({ page }) => {
-    await expect(page.getByRole('heading', { name: /youtube to mp3/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /youtube to music/i })).toBeVisible();
     await expect(page.getByPlaceholder(/https:\/\/www\.youtube\.com/i)).toBeVisible();
   });
 
@@ -133,7 +133,7 @@ test.describe('Full download flow', () => {
     await page.waitForSelector('h2:has-text("Edit ID3 Tags")');
 
     await page.getByRole('button', { name: /new download/i }).click();
-    await expect(page.getByRole('heading', { name: /youtube to mp3/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /youtube to music/i })).toBeVisible();
   });
 });
 

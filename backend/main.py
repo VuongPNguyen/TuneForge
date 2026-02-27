@@ -8,19 +8,25 @@ import logging
 import shutil
 import socket
 import ipaddress
+import hmac
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse, quote as urlquote
 
+import aiosqlite
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
+from jose import jwt, JWTError
 
 import yt_dlp
 from mutagen.id3 import (
@@ -37,6 +43,8 @@ logger = logging.getLogger(__name__)
 
 TEMP_DIR = Path(__file__).parent / "temp"
 TEMP_DIR.mkdir(exist_ok=True)
+
+FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
 # --- Constants -----------------------------------------------------------
 VALID_BITRATES = {96, 128, 256, 320}
@@ -92,6 +100,20 @@ GEMINI_API_URL = (
     "/gemini-2.5-pro:generateContent"
 )
 
+# --- Admin auth config ---------------------------------------------------
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+JWT_SECRET = os.getenv("JWT_SECRET", "")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_DAYS = 30
+
+DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR.mkdir(exist_ok=True)
+SQLITE_PATH = Path(os.getenv("SQLITE_PATH", str(DATA_DIR / "config.db")))
+
+_http_bearer = HTTPBearer(auto_error=False)
+_db: aiosqlite.Connection  # initialised in lifespan
+
 # -------------------------------------------------------------------------
 
 # Semaphore that caps parallel yt-dlp/ffmpeg jobs
@@ -116,8 +138,27 @@ async def _periodic_cleanup():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _DOWNLOAD_SEM
+    global _DOWNLOAD_SEM, _db
     _DOWNLOAD_SEM = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+    _db = await aiosqlite.connect(str(SQLITE_PATH))
+    _db.row_factory = aiosqlite.Row
+    await _db.execute("PRAGMA journal_mode=WAL")
+    await _db.execute("PRAGMA foreign_keys=ON")
+    await _db.executescript("""
+        CREATE TABLE IF NOT EXISTS artist_mappings (
+            raw     TEXT PRIMARY KEY,
+            display TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS albums (
+            id           TEXT PRIMARY KEY,
+            album_artist TEXT NOT NULL,
+            album        TEXT NOT NULL,
+            genre        TEXT NOT NULL DEFAULT '',
+            year         TEXT NOT NULL DEFAULT '',
+            art_base64   TEXT
+        );
+    """)
+    await _db.commit()
     cleanup_old_files()
     task = asyncio.create_task(_periodic_cleanup())
     yield
@@ -126,10 +167,19 @@ async def lifespan(app: FastAPI):
         await task
     except asyncio.CancelledError:
         pass
+    await _db.close()
 
 
 def _get_client_ip(request: Request) -> str:
-    """Use the direct TCP connection IP — never trust X-Forwarded-For to prevent rate-limit spoofing."""
+    """Return the real client IP.
+
+    Fly-Client-IP is set by Fly.io's edge and cannot be spoofed by clients,
+    so it is safe to trust unlike X-Forwarded-For.  Fall back to the direct
+    TCP connection IP in all other environments.
+    """
+    fly_ip = request.headers.get("Fly-Client-IP", "").strip()
+    if fly_ip:
+        return fly_ip
     if request.client:
         return request.client.host
     return "unknown"
@@ -137,7 +187,7 @@ def _get_client_ip(request: Request) -> str:
 
 limiter = Limiter(key_func=_get_client_ip)
 
-app = FastAPI(title="YT to MP3 API", lifespan=lifespan)
+app = FastAPI(title="YT to Music API", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -176,8 +226,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
@@ -237,8 +287,9 @@ def _validate_file_id(file_id: str) -> bool:
 
 
 def _safe_filename(name: str) -> str:
-    keep = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.()")
-    sanitized = "".join(c if c in keep else "_" for c in name).strip()
+    # Remove only characters not allowed in filenames: \ / : * ? " < > |
+    disallowed = set('\\/:*?"<>|')
+    sanitized = "".join(c for c in name if c not in disallowed).strip()
     return sanitized[:100] or "download"
 
 
@@ -291,6 +342,101 @@ def _download(url: str, opts: dict) -> dict:
 def _cleanup_files(file_id: str):
     for ext in [".mp3", ".webm", ".m4a", ".opus"]:
         (TEMP_DIR / f"{file_id}{ext}").unlink(missing_ok=True)
+
+
+# --- Admin auth helpers ---------------------------------------------------
+
+def _create_token() -> str:
+    expire = datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRE_DAYS)
+    return jwt.encode({"sub": "admin", "exp": expire}, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def _verify_token(token: str) -> bool:
+    if not JWT_SECRET:
+        return False
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload.get("sub") == "admin"
+    except JWTError:
+        return False
+
+
+async def require_admin(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_http_bearer),
+) -> None:
+    if not credentials or not _verify_token(credentials.credentials):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+
+# --- Admin config storage (SQLite) ---------------------------------------
+
+async def _db_get_mappings() -> list[dict]:
+    async with _db.execute("SELECT raw, display FROM artist_mappings ORDER BY raw") as cur:
+        rows = await cur.fetchall()
+    return [{"raw": r["raw"], "display": r["display"]} for r in rows]
+
+
+async def _db_put_mapping(raw: str, display: str) -> None:
+    await _db.execute(
+        "INSERT INTO artist_mappings (raw, display) VALUES (?, ?)"
+        " ON CONFLICT(raw) DO UPDATE SET display=excluded.display",
+        (raw, display),
+    )
+    await _db.commit()
+
+
+async def _db_delete_mapping(raw: str) -> None:
+    await _db.execute("DELETE FROM artist_mappings WHERE raw=?", (raw,))
+    await _db.commit()
+
+
+async def _db_get_albums() -> list[dict]:
+    async with _db.execute(
+        "SELECT id, album_artist, album, genre, year, art_base64 FROM albums ORDER BY album_artist, album"
+    ) as cur:
+        rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def _db_put_album(record: dict) -> None:
+    await _db.execute(
+        "INSERT INTO albums (id, album_artist, album, genre, year, art_base64)"
+        " VALUES (:id, :album_artist, :album, :genre, :year, :art_base64)"
+        " ON CONFLICT(id) DO UPDATE SET"
+        "  album_artist=excluded.album_artist,"
+        "  album=excluded.album,"
+        "  genre=excluded.genre,"
+        "  year=excluded.year,"
+        "  art_base64=excluded.art_base64",
+        record,
+    )
+    await _db.commit()
+
+
+async def _db_delete_album(album_id: str) -> None:
+    await _db.execute("DELETE FROM albums WHERE id=?", (album_id,))
+    await _db.commit()
+
+
+# --- Admin request models ------------------------------------------------
+
+class LoginRequest(BaseModel):
+    username: str = Field(max_length=200)
+    password: str = Field(max_length=500)
+
+
+class AdminMappingRecord(BaseModel):
+    raw: str = Field(max_length=500)
+    display: str = Field(max_length=500)
+
+
+class AdminAlbumRecord(BaseModel):
+    id: str = Field(max_length=500)
+    album_artist: str = Field(max_length=500)
+    album: str = Field(max_length=500)
+    genre: str = Field(default="", max_length=100)
+    year: str = Field(default="", max_length=4)
+    art_base64: Optional[str] = None  # size validated separately
 
 
 # --- Endpoints ------------------------------------------------------------
@@ -491,7 +637,7 @@ async def fetch_image_url(request: Request, req: FetchImageRequest):
 
     try:
         async with httpx.AsyncClient(
-            follow_redirects=True,
+            follow_redirects=False,
             timeout=15.0,
             verify=True,
             headers={
@@ -585,9 +731,9 @@ Instructions — follow each one carefully:
    c. Unofficial/best-effort romanization as a last resort
    In all cases, strip ALL YouTube noise: "(Official Video)", "[Official Audio]", "(Lyric Video)", "(4K)", "HD", "MV", "M/V", "Official MV", "Official", "(HQ)", "(Performance Video)", "(Visualizer)", "(Live)", etc. Keep featuring artists.
 
-2. **album**: Use the official album or EP name exactly as it appears on Apple Music or Spotify. Return "" only if the track is not found on either platform.
+2. **album**: Use the official album or EP name as it appears on Apple Music or Spotify, but strip any release-type suffixes. Remove trailing " - Single", " - EP", " - LP", " (Single)", " (EP)", " (LP)" and any similar parenthetical or dash-separated release-type labels. Return just the bare title (e.g. "Supernova" not "Supernova - Single"). Return "" only if the track is not found on either platform.
 
-3. **track_number**: The track's position on the album as listed on Apple Music or Spotify, in the format "N" or "N/Total" (e.g. "3" or "3/12"). Return "" only if unknown.
+3. **track_number**: The track's position on the album as listed on Apple Music or Spotify. Return a single integer only (e.g. "3"). Do not include the total track count or any slash notation. Return "" only if unknown.
 
 4. **artist / album_artist**: Use the exact artist name formatting from Apple Music or Spotify (e.g. correct capitalisation, spacing). Return unchanged if already correct.
 
@@ -673,16 +819,30 @@ Return ONLY a JSON object with exactly these keys: title, artist, album, album_a
     def _s(val, max_len: int = 500) -> str:
         return str(val).strip()[:max_len] if val else ""
 
+    raw_album = _s(suggestions.get("album"), 500)
+    raw_album = re.sub(
+        r"\s*[-–]\s*(Single|EP|LP)\s*$",
+        "",
+        raw_album,
+        flags=re.IGNORECASE,
+    )
+    raw_album = re.sub(
+        r"\s*\((Single|EP|LP)\)\s*$",
+        "",
+        raw_album,
+        flags=re.IGNORECASE,
+    ).strip()
+
     raw_year = _s(suggestions.get("year"), 4)
     year = raw_year if re.match(r"^\d{4}$", raw_year) else ""
 
-    raw_track = _s(suggestions.get("track_number"), 20)
-    track_number = raw_track if re.match(r"^\d+(/\d+)?$", raw_track) else ""
+    raw_track = _s(suggestions.get("track_number"), 20).split("/")[0].strip()
+    track_number = raw_track if re.match(r"^\d+$", raw_track) else ""
 
     return {
         "title": _s(suggestions.get("title"), 500),
         "artist": _s(suggestions.get("artist"), 500),
-        "album": _s(suggestions.get("album"), 500),
+        "album": raw_album,
         "album_artist": _s(suggestions.get("album_artist"), 500),
         "year": year,
         "track_number": track_number,
@@ -703,3 +863,91 @@ async def cancel_download(request: Request, file_id: str):
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/ai-status")
+async def ai_status():
+    return {"available": bool(GEMINI_API_KEY)}
+
+
+# --- Auth endpoints -------------------------------------------------------
+
+@app.post("/api/auth/login")
+@limiter.limit("10/minute")
+async def login(request: Request, req: LoginRequest):
+    if not ADMIN_USERNAME or not ADMIN_PASSWORD or not JWT_SECRET:
+        raise HTTPException(status_code=503, detail="Admin account is not configured")
+    username_ok = hmac.compare_digest(req.username, ADMIN_USERNAME)
+    password_ok = hmac.compare_digest(req.password, ADMIN_PASSWORD)
+    if not (username_ok and password_ok):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    return {"token": _create_token()}
+
+
+@app.get("/api/auth/me")
+async def auth_me(_: None = Depends(require_admin)):
+    return {"username": ADMIN_USERNAME}
+
+
+# --- Admin config endpoints ----------------------------------------------
+
+@app.get("/api/admin/mappings")
+async def get_mappings(_: None = Depends(require_admin)):
+    return await _db_get_mappings()
+
+
+@app.put("/api/admin/mappings")
+async def put_mapping(record: AdminMappingRecord, _: None = Depends(require_admin)):
+    await _db_put_mapping(record.raw, record.display)
+    return {"ok": True}
+
+
+@app.delete("/api/admin/mappings/{raw}")
+async def delete_mapping(raw: str, _: None = Depends(require_admin)):
+    if len(raw) > 500:
+        raise HTTPException(status_code=400, detail="raw too long")
+    await _db_delete_mapping(raw)
+    return {"ok": True}
+
+
+@app.get("/api/admin/albums")
+async def get_albums(_: None = Depends(require_admin)):
+    return await _db_get_albums()
+
+
+@app.put("/api/admin/albums")
+async def put_album(record: AdminAlbumRecord, _: None = Depends(require_admin)):
+    if record.art_base64 and len(record.art_base64) > MAX_ALBUM_ART_B64_BYTES:
+        raise HTTPException(status_code=400, detail="Album art too large (max ~5 MB)")
+    await _db_put_album(record.model_dump())
+    return {"ok": True}
+
+
+@app.delete("/api/admin/albums/{album_id}")
+async def delete_album(album_id: str, _: None = Depends(require_admin)):
+    if len(album_id) > 500:
+        raise HTTPException(status_code=400, detail="album_id too long")
+    await _db_delete_album(album_id)
+    return {"ok": True}
+
+
+# Serve the React SPA — only active when the production build is present.
+# API routes registered above take precedence because they are evaluated first.
+if FRONTEND_DIST.is_dir():
+    # Serve individual static asset files (JS/CSS chunks, images, fonts…)
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(FRONTEND_DIST / "assets")),
+        name="static-assets",
+    )
+
+    _DIST_ROOT = FRONTEND_DIST.resolve()
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        """Return a static file if it exists, otherwise fall back to index.html for SPA routing."""
+        candidate = (FRONTEND_DIST / full_path).resolve()
+        # Ensure the resolved path stays within the dist tree (prevents path traversal)
+        if candidate.is_relative_to(_DIST_ROOT) and candidate.is_file():
+            return FileResponse(str(candidate))
+        return FileResponse(str(FRONTEND_DIST / "index.html"))
