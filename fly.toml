@@ -1,38 +1,35 @@
-# fly.toml — Fly.io deployment config
-# Replace "your-app-name" with your actual Fly.io app name (must be globally unique).
-# Run `fly launch --no-deploy` to let flyctl generate a name, then copy it here.
+# fly.toml app configuration file generated for tuneforge on 2026-02-27T23:08:12Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
-app = "tuneforge"
-primary_region = "iad"
+app = 'tuneforge'
+primary_region = 'iad'
 
 [build]
 
 [env]
-  PORT = "8000"
-  # CORS is not needed when frontend and backend share the same origin.
-  # Set GEMINI_API_KEY as a secret instead:  fly secrets set GEMINI_API_KEY=AIza...
+  PORT = '8000'
+
+[[mounts]]
+  source = 'ytmp3_data'
+  destination = '/app/data'
 
 [http_service]
   internal_port = 8000
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
 
   [[http_service.checks]]
-    grace_period = "15s"
-    interval = "30s"
-    method = "GET"
-    path = "/api/health"
-    timeout = "5s"
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '15s'
+    method = 'GET'
+    path = '/api/health'
 
 [[vm]]
-  memory = "256mb"
-  cpu_kind = "shared"
+  memory = '256mb'
   cpus = 1
-
-# Persistent volume for SQLite config database (ADR-0004).
-# Create before first deploy:  fly volumes create ytmp3_data --region iad --size 1
-[[mounts]]
-  source = "ytmp3_data"
-  destination = "/app/data"
+  memory_mb = 256

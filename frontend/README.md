@@ -1,6 +1,6 @@
-# Frontend — YT to Music
+# Frontend — TuneForge (YT to Music)
 
-React 19 + TypeScript + Vite frontend for the YT to Music converter.
+React 19 + TypeScript + Vite frontend for TuneForge (YT to Music).
 
 For full project documentation and setup instructions, see the [root README](../README.md).
 

@@ -1,6 +1,6 @@
 # Deploying to Fly.io
 
-Step-by-step reference for deploying TuneForge to [Fly.io](https://fly.io).
+Step-by-step reference for deploying TuneForge to [Fly.io](https://fly.io). For the rationale behind Fly.io, see [ADR-0005: Deploy on Fly.io](decisions/0005-fly-io-deployment.md).
 
 ---
 
@@ -66,6 +66,26 @@ successful.
 
 ---
 
+## Pre-deploy checklist
+
+From the repo root, run (requires `fly` in your PATH):
+
+```bash
+./scripts/fly-preflight.sh
+```
+
+Or verify manually:
+
+| Check | Command | What you need |
+|-------|---------|----------------|
+| App exists | `fly status` | App name and "No machines" or machine list |
+| Volume exists | `fly volumes list` | `ytmp3_data` in region `iad` |
+| Secrets set | `fly secrets list` | `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `JWT_SECRET` (and optionally `GEMINI_API_KEY`) |
+
+If any check fails, fix it before running `fly deploy`.
+
+---
+
 ## Subsequent deploys
 
 ```bash
@@ -73,6 +93,25 @@ fly deploy
 ```
 
 That's it. Secrets and the persistent volume are preserved across deploys.
+
+---
+
+## Optional: Deploy from GitHub Actions
+
+The repo includes a workflow that deploys to Fly.io on every push to `main`. To use it:
+
+1. In the [Fly.io dashboard](https://fly.io/dashboard), open your app → **Settings** → **Secrets** (or run `fly tokens create deploy` in the CLI) to create a **Deploy** token.
+2. In GitHub: **Settings** → **Secrets and variables** → **Actions** → **New repository secret**. Name it `FLY_API_TOKEN` and paste the token.
+
+After that, pushing to `main` will trigger a deploy of TuneForge via `.github/workflows/fly-deploy.yml`. The workflow uses `--remote-only`, so the image is built on Fly's servers (no Docker required in CI).
+
+---
+
+## After first deploy
+
+- Open the TuneForge app with `fly open` (or use the URL shown in `fly status`).
+- Log in with your admin credentials (`ADMIN_USERNAME` / `ADMIN_PASSWORD`).
+- Configure artist mappings and saved albums as needed; they are stored on the persistent volume and survive redeploys.
 
 ---
 

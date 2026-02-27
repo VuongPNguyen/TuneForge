@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-This directory contains ADRs (Architecture Decision Records) documenting significant technical choices made during development. Each record captures the context, the decision, its consequences, and the alternatives that were considered and rejected.
+This directory contains ADRs (Architecture Decision Records) documenting significant technical choices made during development of TuneForge. Each record captures the context, the decision, its consequences, and the alternatives that were considered and rejected.
 
 ## Index
 

@@ -1,6 +1,6 @@
-# YT to Music
+# TuneForge (YT to Music)
 
-A self-hosted web application for converting YouTube videos to music files with a built-in ID3 tag editor. Paste a URL, pick a bitrate, tweak the metadata, and download a properly tagged file — all in a few clicks.
+**TuneForge** is a self-hosted web application for converting YouTube videos to music files with a built-in ID3 tag editor. Paste a URL, pick a bitrate, tweak the metadata, and download a properly tagged file — all in a few clicks.
 
 ---
 
@@ -57,7 +57,7 @@ Browser  →  Vite dev server (port 5173)
 
 ## Legal Notice
 
-This tool is intended for **personal use only**. Only download content you have the right to use. Please respect copyright law and YouTube's [Terms of Service](https://www.youtube.com/t/terms).
+TuneForge is intended for **personal use only**. Only download content you have the right to use. Please respect copyright law and YouTube's [Terms of Service](https://www.youtube.com/t/terms).
 
 ---
 
