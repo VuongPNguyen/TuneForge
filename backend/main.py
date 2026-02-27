@@ -287,8 +287,9 @@ def _validate_file_id(file_id: str) -> bool:
 
 
 def _safe_filename(name: str) -> str:
-    keep = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.()")
-    sanitized = "".join(c if c in keep else "_" for c in name).strip()
+    # Remove only characters not allowed in filenames: \ / : * ? " < > |
+    disallowed = set('\\/:*?"<>|')
+    sanitized = "".join(c for c in name if c not in disallowed).strip()
     return sanitized[:100] or "download"
 
 
