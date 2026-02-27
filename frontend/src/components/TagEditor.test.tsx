@@ -11,6 +11,18 @@ vi.mock('../api', () => ({
 import { fetchImageFromUrl } from '../api';
 const mockFetchImageFromUrl = vi.mocked(fetchImageFromUrl);
 
+// Mock the db module so tests never touch IndexedDB (unavailable in JSDOM)
+vi.mock('../db', () => ({
+  getArtistMappings: vi.fn().mockResolvedValue([]),
+  putArtistMapping: vi.fn().mockResolvedValue(undefined),
+  deleteArtistMapping: vi.fn().mockResolvedValue(undefined),
+  getAlbums: vi.fn().mockResolvedValue([]),
+  deleteAlbum: vi.fn().mockResolvedValue(undefined),
+  putAlbum: vi.fn().mockResolvedValue(undefined),
+  albumKey: vi.fn((artist: string, album: string) => `${artist}::${album}`),
+  blobToBase64: vi.fn().mockResolvedValue(''),
+}));
+
 const BASE_METADATA: DownloadMetadata = {
   file_id: 'test-file-id',
   title: 'Test Track',
@@ -244,7 +256,7 @@ describe('TagEditor form submission', () => {
     const user = userEvent.setup();
     const { onSave } = setup();
 
-    await user.click(screen.getByRole('button', { name: /save & download mp3/i }));
+    await user.click(screen.getByRole('button', { name: /save & download/i }));
 
     expect(onSave).toHaveBeenCalledOnce();
     const tags = onSave.mock.calls[0][0];
@@ -267,7 +279,8 @@ describe('TagEditor form submission', () => {
   it('calls onReset when New download is clicked', async () => {
     const user = userEvent.setup();
     const { onReset } = setup();
-    await user.click(screen.getByRole('button', { name: /new download/i }));
+    // Two "New download" buttons exist (header and footer); click the first one
+    await user.click(screen.getAllByRole('button', { name: /new download/i })[0]);
     expect(onReset).toHaveBeenCalledOnce();
   });
 

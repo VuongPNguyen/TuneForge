@@ -17,6 +17,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -37,6 +38,8 @@ logger = logging.getLogger(__name__)
 
 TEMP_DIR = Path(__file__).parent / "temp"
 TEMP_DIR.mkdir(exist_ok=True)
+
+FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
 # --- Constants -----------------------------------------------------------
 VALID_BITRATES = {96, 128, 256, 320}
@@ -129,7 +132,15 @@ async def lifespan(app: FastAPI):
 
 
 def _get_client_ip(request: Request) -> str:
-    """Use the direct TCP connection IP — never trust X-Forwarded-For to prevent rate-limit spoofing."""
+    """Return the real client IP.
+
+    Fly-Client-IP is set by Fly.io's edge and cannot be spoofed by clients,
+    so it is safe to trust unlike X-Forwarded-For.  Fall back to the direct
+    TCP connection IP in all other environments.
+    """
+    fly_ip = request.headers.get("Fly-Client-IP", "").strip()
+    if fly_ip:
+        return fly_ip
     if request.client:
         return request.client.host
     return "unknown"
@@ -137,7 +148,7 @@ def _get_client_ip(request: Request) -> str:
 
 limiter = Limiter(key_func=_get_client_ip)
 
-app = FastAPI(title="YT to MP3 API", lifespan=lifespan)
+app = FastAPI(title="YT to Music API", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -703,3 +714,22 @@ async def cancel_download(request: Request, file_id: str):
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+# Serve the React SPA — only active when the production build is present.
+# API routes registered above take precedence because they are evaluated first.
+if FRONTEND_DIST.is_dir():
+    # Serve individual static asset files (JS/CSS chunks, images, fonts…)
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(FRONTEND_DIST / "assets")),
+        name="static-assets",
+    )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        """Return a static file if it exists, otherwise fall back to index.html for SPA routing."""
+        candidate = FRONTEND_DIST / full_path
+        if candidate.is_file():
+            return FileResponse(str(candidate))
+        return FileResponse(str(FRONTEND_DIST / "index.html"))

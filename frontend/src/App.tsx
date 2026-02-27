@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Github } from 'lucide-react';
 import DownloadForm from './components/DownloadForm';
 import LoadingState from './components/LoadingState';
 import TagEditor from './components/TagEditor';
@@ -90,19 +89,13 @@ export default function App() {
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-brand-600/30 border border-brand-500/40 flex items-center justify-center">
-              <span className="text-brand-400 text-xs font-bold">M3</span>
+              <span className="text-brand-400 text-xs font-bold">TF</span>
             </div>
-            <span className="text-white font-semibold text-sm">YT to MP3</span>
+            <div className="flex items-baseline gap-2">
+              <span className="text-white font-semibold text-sm">TuneForge</span>
+              <span className="text-slate-600 text-xs hidden sm:inline">YouTube → MP3</span>
+            </div>
           </div>
-          <a
-            href="https://github.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-slate-500 hover:text-slate-300 transition-colors"
-            aria-label="View on GitHub"
-          >
-            <Github className="w-5 h-5" />
-          </a>
         </div>
       </header>
 

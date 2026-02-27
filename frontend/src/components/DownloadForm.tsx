@@ -53,11 +53,14 @@ export default function DownloadForm({ onSubmit, isLoading }: Props) {
         <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-brand-600/20 border border-brand-500/30 mb-6 shadow-lg shadow-brand-500/10">
           <Music className="w-9 h-9 text-brand-400" />
         </div>
-        <h1 className="text-4xl font-bold text-white mb-3 tracking-tight">
-          YouTube to MP3
+        <h1 className="text-5xl font-bold text-white mb-2 tracking-tight">
+          TuneForge
         </h1>
-        <p className="text-slate-400 text-lg">
-          Convert any YouTube video to a high-quality MP3 with custom ID3 tags.
+        <p className="text-brand-400 text-xs font-semibold uppercase tracking-widest mb-4">
+          YouTube → MP3 Converter
+        </p>
+        <p className="text-slate-400 text-base">
+          Convert any YouTube video to a tagged, high-quality MP3 with ID3 metadata and album art.
         </p>
       </div>
 
@@ -144,7 +147,7 @@ export default function DownloadForm({ onSubmit, isLoading }: Props) {
             text-white font-semibold text-base transition-all duration-150 shadow-lg shadow-brand-600/25
             hover:shadow-brand-500/30 active:scale-[0.99] cursor-pointer"
         >
-          Convert to MP3
+          Convert to Music
         </button>
       </form>
     </div>

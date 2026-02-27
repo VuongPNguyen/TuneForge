@@ -26,7 +26,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo -e "${CYAN}Starting YT to MP3…${RESET}\n"
+echo -e "${CYAN}Starting YT to Music…${RESET}\n"
 
 # ── Load .env if present ──────────────────────────────────────────────────────
 if [ -f "$ROOT/.env" ]; then

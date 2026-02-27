@@ -460,7 +460,7 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-bold text-white">Edit ID3 Tags</h2>
-          <p className="text-slate-400 text-sm mt-1">Customize the metadata for your MP3 file</p>
+          <p className="text-slate-400 text-sm mt-1">Customize the metadata for your music file</p>
         </div>
         <button
           type="button"
@@ -1043,7 +1043,7 @@ export default function TagEditor({ metadata, onSave, isSaving, onReset, albumAu
             ) : (
               <>
                 <Download className="w-5 h-5" />
-                Save & Download MP3
+                Save & Download
               </>
             )}
           </button>
