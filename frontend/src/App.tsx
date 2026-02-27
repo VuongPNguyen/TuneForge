@@ -13,6 +13,7 @@ import {
   getAiStatus,
 } from './api';
 import { lookupArtist, lookupAlbum, blobToBase64 } from './db';
+import { safeFilename } from './utils/filename';
 import type { AppStep, DownloadMetadata, ID3Tags } from './types';
 import type { ArtistMapping, AlbumRecord } from './db';
 
@@ -146,7 +147,8 @@ export default function App() {
     setIsSaving(true);
     setError(null);
     try {
-      const filename = [tags.artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
+      const rawFilename = [tags.artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
+      const filename = safeFilename(rawFilename);
       const blob = await saveWithTags(metadata.file_id, tags, filename);
       const fullFilename = filename + '.mp3';
       setSavedFile({ blob, filename: fullFilename, tags });

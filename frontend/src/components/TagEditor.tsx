@@ -16,6 +16,7 @@ import {
   getAlbums, deleteAlbum, putAlbum, albumKey, blobToBase64,
   type ArtistMapping, type AlbumRecord,
 } from '../db';
+import { safeFilename as sanitizeFilename } from '../utils/filename';
 
 interface Props {
   metadata: DownloadMetadata;
@@ -506,7 +507,8 @@ export default function TagEditor({
     }
   }
 
-  const safeFilename = [tags.artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
+  const rawFilename = [tags.artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
+  const safeFilename = sanitizeFilename(rawFilename);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (

@@ -75,7 +75,7 @@ describe('TagEditor rendering', () => {
     expect(fields[0]).toBeInTheDocument();
   });
 
-  it('shows the output filename preview', () => {
+  it('shows the output filename preview with sanitized filename', () => {
     setup();
     expect(screen.getByText(/Test Artist - Test Track\.mp3/)).toBeInTheDocument();
   });
