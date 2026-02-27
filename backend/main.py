@@ -15,6 +15,7 @@ from typing import Optional
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse, quote as urlquote
 
+import aiosqlite
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -108,10 +109,10 @@ JWT_EXPIRE_DAYS = 30
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
-ADMIN_CONFIG_FILE = DATA_DIR / "admin_config.json"
+SQLITE_PATH = Path(os.getenv("SQLITE_PATH", str(DATA_DIR / "config.db")))
 
-_config_lock = asyncio.Lock()
 _http_bearer = HTTPBearer(auto_error=False)
+_db: aiosqlite.Connection  # initialised in lifespan
 
 # -------------------------------------------------------------------------
 
@@ -137,8 +138,27 @@ async def _periodic_cleanup():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _DOWNLOAD_SEM
+    global _DOWNLOAD_SEM, _db
     _DOWNLOAD_SEM = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+    _db = await aiosqlite.connect(str(SQLITE_PATH))
+    _db.row_factory = aiosqlite.Row
+    await _db.execute("PRAGMA journal_mode=WAL")
+    await _db.execute("PRAGMA foreign_keys=ON")
+    await _db.executescript("""
+        CREATE TABLE IF NOT EXISTS artist_mappings (
+            raw     TEXT PRIMARY KEY,
+            display TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS albums (
+            id           TEXT PRIMARY KEY,
+            album_artist TEXT NOT NULL,
+            album        TEXT NOT NULL,
+            genre        TEXT NOT NULL DEFAULT '',
+            year         TEXT NOT NULL DEFAULT '',
+            art_base64   TEXT
+        );
+    """)
+    await _db.commit()
     cleanup_old_files()
     task = asyncio.create_task(_periodic_cleanup())
     yield
@@ -147,6 +167,7 @@ async def lifespan(app: FastAPI):
         await task
     except asyncio.CancelledError:
         pass
+    await _db.close()
 
 
 def _get_client_ip(request: Request) -> str:
@@ -346,23 +367,54 @@ async def require_admin(
         raise HTTPException(status_code=401, detail="Authentication required")
 
 
-# --- Admin config storage ------------------------------------------------
+# --- Admin config storage (SQLite) ---------------------------------------
 
-async def _load_config() -> dict:
-    async with _config_lock:
-        if not ADMIN_CONFIG_FILE.exists():
-            return {"mappings": [], "albums": []}
-        loop = asyncio.get_running_loop()
-        raw = await loop.run_in_executor(None, ADMIN_CONFIG_FILE.read_text)
-        return json.loads(raw)
+async def _db_get_mappings() -> list[dict]:
+    async with _db.execute("SELECT raw, display FROM artist_mappings ORDER BY raw") as cur:
+        rows = await cur.fetchall()
+    return [{"raw": r["raw"], "display": r["display"]} for r in rows]
 
 
-async def _save_config(config: dict) -> None:
-    async with _config_lock:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            None, lambda: ADMIN_CONFIG_FILE.write_text(json.dumps(config))
-        )
+async def _db_put_mapping(raw: str, display: str) -> None:
+    await _db.execute(
+        "INSERT INTO artist_mappings (raw, display) VALUES (?, ?)"
+        " ON CONFLICT(raw) DO UPDATE SET display=excluded.display",
+        (raw, display),
+    )
+    await _db.commit()
+
+
+async def _db_delete_mapping(raw: str) -> None:
+    await _db.execute("DELETE FROM artist_mappings WHERE raw=?", (raw,))
+    await _db.commit()
+
+
+async def _db_get_albums() -> list[dict]:
+    async with _db.execute(
+        "SELECT id, album_artist, album, genre, year, art_base64 FROM albums ORDER BY album_artist, album"
+    ) as cur:
+        rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def _db_put_album(record: dict) -> None:
+    await _db.execute(
+        "INSERT INTO albums (id, album_artist, album, genre, year, art_base64)"
+        " VALUES (:id, :album_artist, :album, :genre, :year, :art_base64)"
+        " ON CONFLICT(id) DO UPDATE SET"
+        "  album_artist=excluded.album_artist,"
+        "  album=excluded.album,"
+        "  genre=excluded.genre,"
+        "  year=excluded.year,"
+        "  art_base64=excluded.art_base64",
+        record,
+    )
+    await _db.commit()
+
+
+async def _db_delete_album(album_id: str) -> None:
+    await _db.execute("DELETE FROM albums WHERE id=?", (album_id,))
+    await _db.commit()
 
 
 # --- Admin request models ------------------------------------------------
@@ -584,7 +636,7 @@ async def fetch_image_url(request: Request, req: FetchImageRequest):
 
     try:
         async with httpx.AsyncClient(
-            follow_redirects=True,
+            follow_redirects=False,
             timeout=15.0,
             verify=True,
             headers={
@@ -812,6 +864,11 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/api/ai-status")
+async def ai_status():
+    return {"available": bool(GEMINI_API_KEY)}
+
+
 # --- Auth endpoints -------------------------------------------------------
 
 @app.post("/api/auth/login")
@@ -835,18 +892,12 @@ async def auth_me(_: None = Depends(require_admin)):
 
 @app.get("/api/admin/mappings")
 async def get_mappings(_: None = Depends(require_admin)):
-    config = await _load_config()
-    return config.get("mappings", [])
+    return await _db_get_mappings()
 
 
 @app.put("/api/admin/mappings")
 async def put_mapping(record: AdminMappingRecord, _: None = Depends(require_admin)):
-    config = await _load_config()
-    mappings: list = config.get("mappings", [])
-    mappings = [m for m in mappings if m["raw"] != record.raw]
-    mappings.append({"raw": record.raw, "display": record.display})
-    config["mappings"] = mappings
-    await _save_config(config)
+    await _db_put_mapping(record.raw, record.display)
     return {"ok": True}
 
 
@@ -854,28 +905,20 @@ async def put_mapping(record: AdminMappingRecord, _: None = Depends(require_admi
 async def delete_mapping(raw: str, _: None = Depends(require_admin)):
     if len(raw) > 500:
         raise HTTPException(status_code=400, detail="raw too long")
-    config = await _load_config()
-    config["mappings"] = [m for m in config.get("mappings", []) if m["raw"] != raw]
-    await _save_config(config)
+    await _db_delete_mapping(raw)
     return {"ok": True}
 
 
 @app.get("/api/admin/albums")
 async def get_albums(_: None = Depends(require_admin)):
-    config = await _load_config()
-    return config.get("albums", [])
+    return await _db_get_albums()
 
 
 @app.put("/api/admin/albums")
 async def put_album(record: AdminAlbumRecord, _: None = Depends(require_admin)):
     if record.art_base64 and len(record.art_base64) > MAX_ALBUM_ART_B64_BYTES:
         raise HTTPException(status_code=400, detail="Album art too large (max ~5 MB)")
-    config = await _load_config()
-    albums: list = config.get("albums", [])
-    albums = [a for a in albums if a["id"] != record.id]
-    albums.append(record.model_dump())
-    config["albums"] = albums
-    await _save_config(config)
+    await _db_put_album(record.model_dump())
     return {"ok": True}
 
 
@@ -883,9 +926,7 @@ async def put_album(record: AdminAlbumRecord, _: None = Depends(require_admin)):
 async def delete_album(album_id: str, _: None = Depends(require_admin)):
     if len(album_id) > 500:
         raise HTTPException(status_code=400, detail="album_id too long")
-    config = await _load_config()
-    config["albums"] = [a for a in config.get("albums", []) if a["id"] != album_id]
-    await _save_config(config)
+    await _db_delete_album(album_id)
     return {"ok": True}
 
 
@@ -899,10 +940,13 @@ if FRONTEND_DIST.is_dir():
         name="static-assets",
     )
 
+    _DIST_ROOT = FRONTEND_DIST.resolve()
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
         """Return a static file if it exists, otherwise fall back to index.html for SPA routing."""
-        candidate = FRONTEND_DIST / full_path
-        if candidate.is_file():
+        candidate = (FRONTEND_DIST / full_path).resolve()
+        # Ensure the resolved path stays within the dist tree (prevents path traversal)
+        if candidate.is_relative_to(_DIST_ROOT) and candidate.is_file():
             return FileResponse(str(candidate))
         return FileResponse(str(FRONTEND_DIST / "index.html"))

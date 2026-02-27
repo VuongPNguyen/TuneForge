@@ -76,6 +76,17 @@ export interface AiAutofillSuggestions {
   album_art_url: string;
 }
 
+export async function getAiStatus(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/ai-status');
+    if (!res.ok) return false;
+    const data = await res.json();
+    return Boolean(data.available);
+  } catch {
+    return false;
+  }
+}
+
 export async function aiAutofill(data: AiAutofillPayload): Promise<AiAutofillSuggestions> {
   const res = await fetch('/api/ai-autofill', {
     method: 'POST',

@@ -10,6 +10,7 @@ import {
   verifyAdminToken,
   getAdminMappings,
   getAdminAlbums,
+  getAiStatus,
 } from './api';
 import { lookupArtist, lookupAlbum, blobToBase64 } from './db';
 import type { AppStep, DownloadMetadata, ID3Tags } from './types';
@@ -31,9 +32,15 @@ export default function App() {
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [adminMappings, setAdminMappings] = useState<ArtistMapping[]>([]);
   const [adminAlbums, setAdminAlbums] = useState<AlbumRecord[]>([]);
+  const [adminConfigError, setAdminConfigError] = useState<string | null>(null);
 
-  // Verify stored token and load admin config on mount
+  // ── AI availability ────────────────────────────────────────────────────────
+  const [aiAvailable, setAiAvailable] = useState<boolean | null>(null);
+
+  // Verify stored token, load admin config, and check AI availability on mount
   useEffect(() => {
+    getAiStatus().then(setAiAvailable);
+
     if (!adminToken) return;
     (async () => {
       const valid = await verifyAdminToken(adminToken);
@@ -43,12 +50,16 @@ export default function App() {
         return;
       }
       setIsAdmin(true);
-      const [mappings, albums] = await Promise.all([
-        getAdminMappings(adminToken),
-        getAdminAlbums(adminToken),
-      ]);
-      setAdminMappings(mappings);
-      setAdminAlbums(albums);
+      try {
+        const [mappings, albums] = await Promise.all([
+          getAdminMappings(adminToken),
+          getAdminAlbums(adminToken),
+        ]);
+        setAdminMappings(mappings);
+        setAdminAlbums(albums);
+      } catch {
+        setAdminConfigError('Failed to load your saved settings from the server. Your data is safe — try refreshing.');
+      }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -189,6 +200,12 @@ export default function App() {
       {/* Main content */}
       <main className="flex-1 flex items-center justify-center px-6 py-16">
         <div className="w-full">
+          {adminConfigError && (
+            <div className="max-w-2xl mx-auto mb-0">
+              <ErrorAlert message={adminConfigError} onDismiss={() => setAdminConfigError(null)} />
+            </div>
+          )}
+
           {error && (
             <div className="max-w-2xl mx-auto mb-0">
               <ErrorAlert message={error} onDismiss={() => setError(null)} />
@@ -216,6 +233,7 @@ export default function App() {
               initialAlbums={isAdmin ? adminAlbums : undefined}
               onMappingsChange={isAdmin ? setAdminMappings : undefined}
               onAlbumsChange={isAdmin ? setAdminAlbums : undefined}
+              aiAvailable={aiAvailable ?? true}
             />
           )}
         </div>

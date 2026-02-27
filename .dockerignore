@@ -13,6 +13,7 @@ htmlcov/
 *.egg-info/
 .coverage
 backend/temp/
+data/
 
 # Node artefacts
 **/node_modules/

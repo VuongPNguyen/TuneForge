@@ -29,6 +29,7 @@ interface Props {
   initialAlbums?: AlbumRecord[];
   onMappingsChange?: (mappings: ArtistMapping[]) => void;
   onAlbumsChange?: (albums: AlbumRecord[]) => void;
+  aiAvailable?: boolean;
 }
 
 interface FieldConfig {
@@ -70,6 +71,7 @@ export default function TagEditor({
   metadata, onSave, isSaving, onReset, albumAutofilled,
   isAdmin, adminToken, initialMappings, initialAlbums,
   onMappingsChange, onAlbumsChange,
+  aiAvailable = true,
 }: Props) {
   // ── Tag state ──────────────────────────────────────────────────────────────
   const [tags, setTags] = useState<ID3Tags>({
@@ -967,18 +969,24 @@ export default function TagEditor({
             <button
               type="button"
               onClick={handleAiAutofill}
-              disabled={isSaving || isAiLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600/15 border border-violet-500/25
-                text-violet-300 hover:bg-violet-600/25 hover:border-violet-500/40 transition-all text-xs font-medium
-                cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={isSaving || isAiLoading || !aiAvailable}
+              title={!aiAvailable ? 'AI Autofill is not configured — add a GEMINI_API_KEY to the server' : undefined}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-xs font-medium
+                cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed
+                ${aiAvailable
+                  ? 'bg-violet-600/15 border-violet-500/25 text-violet-300 hover:bg-violet-600/25 hover:border-violet-500/40'
+                  : 'bg-white/5 border-white/10 text-slate-500'
+                }`}
             >
               {isAiLoading
                 ? <Loader2 className="w-3 h-3 animate-spin" />
                 : <Sparkles className="w-3 h-3" />
               }
-              {isAiLoading ? 'Thinking…' : 'AI Autofill'}
+              {isAiLoading ? 'Thinking…' : aiAvailable ? 'AI Autofill' : 'AI Unavailable'}
             </button>
-            <p className="text-[10px] text-slate-600">Powered by Google Search</p>
+            <p className="text-[10px] text-slate-600">
+              {aiAvailable ? 'Powered by Google Search' : 'GEMINI_API_KEY not configured'}
+            </p>
           </div>
         </div>
 
