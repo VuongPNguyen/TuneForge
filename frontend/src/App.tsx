@@ -1,11 +1,21 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { KeyRound, LogOut } from 'lucide-react';
 import DownloadForm from './components/DownloadForm';
 import LoadingState from './components/LoadingState';
 import TagEditor from './components/TagEditor';
 import ErrorAlert from './components/ErrorAlert';
+import LoginModal from './components/LoginModal';
 import { downloadVideo, saveWithTags, triggerDownload, cancelDownload } from './api';
+import {
+  verifyAdminToken,
+  getAdminMappings,
+  getAdminAlbums,
+} from './api';
 import { lookupArtist, lookupAlbum, blobToBase64 } from './db';
 import type { AppStep, DownloadMetadata, ID3Tags } from './types';
+import type { ArtistMapping, AlbumRecord } from './db';
+
+const STORAGE_KEY = 'admin_token';
 
 export default function App() {
   const [step, setStep] = useState<AppStep>('input');
@@ -15,6 +25,53 @@ export default function App() {
   const [albumAutofilled, setAlbumAutofilled] = useState(false);
   const [savedFile, setSavedFile] = useState<{ blob: Blob; filename: string; tags: ID3Tags } | null>(null);
 
+  // ── Admin auth state ───────────────────────────────────────────────────────
+  const [adminToken, setAdminToken] = useState<string | null>(() => localStorage.getItem(STORAGE_KEY));
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [adminMappings, setAdminMappings] = useState<ArtistMapping[]>([]);
+  const [adminAlbums, setAdminAlbums] = useState<AlbumRecord[]>([]);
+
+  // Verify stored token and load admin config on mount
+  useEffect(() => {
+    if (!adminToken) return;
+    (async () => {
+      const valid = await verifyAdminToken(adminToken);
+      if (!valid) {
+        localStorage.removeItem(STORAGE_KEY);
+        setAdminToken(null);
+        return;
+      }
+      setIsAdmin(true);
+      const [mappings, albums] = await Promise.all([
+        getAdminMappings(adminToken),
+        getAdminAlbums(adminToken),
+      ]);
+      setAdminMappings(mappings);
+      setAdminAlbums(albums);
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function handleLogin(token: string) {
+    localStorage.setItem(STORAGE_KEY, token);
+    setAdminToken(token);
+    setIsAdmin(true);
+    setShowLoginModal(false);
+    Promise.all([getAdminMappings(token), getAdminAlbums(token)]).then(([m, a]) => {
+      setAdminMappings(m);
+      setAdminAlbums(a);
+    });
+  }
+
+  function handleLogout() {
+    localStorage.removeItem(STORAGE_KEY);
+    setAdminToken(null);
+    setIsAdmin(false);
+    setAdminMappings([]);
+    setAdminAlbums([]);
+  }
+
   async function handleDownload(url: string, bitrate: number) {
     setError(null);
     setStep('downloading');
@@ -22,22 +79,40 @@ export default function App() {
     try {
       const data = await downloadVideo(url, bitrate);
 
-      // Apply artist name mappings to both artist and album_artist fields
-      const artistDisplay = await lookupArtist(data.artist);
-      if (artistDisplay) data.artist = artistDisplay;
+      if (isAdmin) {
+        // Use in-memory admin mappings
+        const artistMap = adminMappings.find((m) => m.raw === data.artist);
+        if (artistMap) data.artist = artistMap.display;
+        const albumArtistMap = adminMappings.find((m) => m.raw === data.album_artist);
+        if (albumArtistMap) data.album_artist = albumArtistMap.display;
 
-      const albumArtistDisplay = await lookupArtist(data.album_artist);
-      if (albumArtistDisplay) data.album_artist = albumArtistDisplay;
-
-      // Apply album autofill (genre, year, art) if a saved album matches
-      const albumRecord = await lookupAlbum(data.album_artist, data.album);
-      if (albumRecord) {
-        data.genre = albumRecord.genre;
-        data.year = albumRecord.year;
-        if (albumRecord.art) {
-          data.thumbnail_b64 = await blobToBase64(albumRecord.art);
+        const albumRecord = adminAlbums.find(
+          (a) => a.album_artist === data.album_artist && a.album === data.album
+        );
+        if (albumRecord) {
+          data.genre = albumRecord.genre;
+          data.year = albumRecord.year;
+          if (albumRecord.art) {
+            data.thumbnail_b64 = await blobToBase64(albumRecord.art);
+          }
+          setAlbumAutofilled(true);
         }
-        setAlbumAutofilled(true);
+      } else {
+        // Use IndexedDB for non-admin users
+        const artistDisplay = await lookupArtist(data.artist);
+        if (artistDisplay) data.artist = artistDisplay;
+        const albumArtistDisplay = await lookupArtist(data.album_artist);
+        if (albumArtistDisplay) data.album_artist = albumArtistDisplay;
+
+        const albumRecord = await lookupAlbum(data.album_artist, data.album);
+        if (albumRecord) {
+          data.genre = albumRecord.genre;
+          data.year = albumRecord.year;
+          if (albumRecord.art) {
+            data.thumbnail_b64 = await blobToBase64(albumRecord.art);
+          }
+          setAlbumAutofilled(true);
+        }
       }
 
       setMetadata(data);
@@ -96,6 +171,18 @@ export default function App() {
               <span className="text-slate-600 text-xs hidden sm:inline">YouTube → MP3</span>
             </div>
           </div>
+
+          {/* Admin indicator — only visible when signed in */}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={handleLogout}
+              title="Signed in as admin · Click to sign out"
+              className="text-slate-700 hover:text-slate-400 transition-colors cursor-pointer"
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </header>
 
@@ -123,26 +210,52 @@ export default function App() {
               isSaving={isSaving}
               onReset={handleReset}
               albumAutofilled={albumAutofilled}
+              isAdmin={isAdmin}
+              adminToken={adminToken ?? undefined}
+              initialMappings={isAdmin ? adminMappings : undefined}
+              initialAlbums={isAdmin ? adminAlbums : undefined}
+              onMappingsChange={isAdmin ? setAdminMappings : undefined}
+              onAlbumsChange={isAdmin ? setAdminAlbums : undefined}
             />
           )}
         </div>
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-white/6 py-6 px-6 text-center">
-        <p className="text-xs text-slate-600">
-          For personal use only. Respect copyright and YouTube's{' '}
-          <a
-            href="https://www.youtube.com/t/terms"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-slate-500 hover:text-slate-400 underline transition-colors"
-          >
-            Terms of Service
-          </a>
-          .
-        </p>
+      <footer className="border-t border-white/6 py-6 px-6">
+        <div className="flex items-center justify-center relative">
+          <p className="text-xs text-slate-600">
+            For personal use only. Respect copyright and YouTube's{' '}
+            <a
+              href="https://www.youtube.com/t/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-slate-500 hover:text-slate-400 underline transition-colors"
+            >
+              Terms of Service
+            </a>
+            .
+          </p>
+          {/* Login trigger — invisible until hovered */}
+          {!isAdmin && (
+            <button
+              type="button"
+              onClick={() => setShowLoginModal(true)}
+              aria-label="Admin login"
+              className="absolute right-0 text-slate-900 hover:text-slate-700 transition-colors cursor-pointer"
+            >
+              <LogOut className="w-3 h-3" />
+            </button>
+          )}
+        </div>
       </footer>
+
+      {showLoginModal && (
+        <LoginModal
+          onLogin={handleLogin}
+          onClose={() => setShowLoginModal(false)}
+        />
+      )}
     </div>
   );
 }

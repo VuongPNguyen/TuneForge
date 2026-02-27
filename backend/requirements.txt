@@ -7,3 +7,4 @@ aiofiles==24.1.0
 Pillow==11.1.0
 slowapi==0.1.9
 httpx==0.28.1
+python-jose[cryptography]==3.3.0

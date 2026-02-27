@@ -8,20 +8,24 @@ import logging
 import shutil
 import socket
 import ipaddress
+import hmac
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse, quote as urlquote
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
+from jose import jwt, JWTError
 
 import yt_dlp
 from mutagen.id3 import (
@@ -94,6 +98,20 @@ GEMINI_API_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models"
     "/gemini-2.5-pro:generateContent"
 )
+
+# --- Admin auth config ---------------------------------------------------
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+JWT_SECRET = os.getenv("JWT_SECRET", "")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_DAYS = 30
+
+DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR.mkdir(exist_ok=True)
+ADMIN_CONFIG_FILE = DATA_DIR / "admin_config.json"
+
+_config_lock = asyncio.Lock()
+_http_bearer = HTTPBearer(auto_error=False)
 
 # -------------------------------------------------------------------------
 
@@ -187,8 +205,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
@@ -302,6 +320,70 @@ def _download(url: str, opts: dict) -> dict:
 def _cleanup_files(file_id: str):
     for ext in [".mp3", ".webm", ".m4a", ".opus"]:
         (TEMP_DIR / f"{file_id}{ext}").unlink(missing_ok=True)
+
+
+# --- Admin auth helpers ---------------------------------------------------
+
+def _create_token() -> str:
+    expire = datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRE_DAYS)
+    return jwt.encode({"sub": "admin", "exp": expire}, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def _verify_token(token: str) -> bool:
+    if not JWT_SECRET:
+        return False
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload.get("sub") == "admin"
+    except JWTError:
+        return False
+
+
+async def require_admin(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_http_bearer),
+) -> None:
+    if not credentials or not _verify_token(credentials.credentials):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+
+# --- Admin config storage ------------------------------------------------
+
+async def _load_config() -> dict:
+    async with _config_lock:
+        if not ADMIN_CONFIG_FILE.exists():
+            return {"mappings": [], "albums": []}
+        loop = asyncio.get_running_loop()
+        raw = await loop.run_in_executor(None, ADMIN_CONFIG_FILE.read_text)
+        return json.loads(raw)
+
+
+async def _save_config(config: dict) -> None:
+    async with _config_lock:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None, lambda: ADMIN_CONFIG_FILE.write_text(json.dumps(config))
+        )
+
+
+# --- Admin request models ------------------------------------------------
+
+class LoginRequest(BaseModel):
+    username: str = Field(max_length=200)
+    password: str = Field(max_length=500)
+
+
+class AdminMappingRecord(BaseModel):
+    raw: str = Field(max_length=500)
+    display: str = Field(max_length=500)
+
+
+class AdminAlbumRecord(BaseModel):
+    id: str = Field(max_length=500)
+    album_artist: str = Field(max_length=500)
+    album: str = Field(max_length=500)
+    genre: str = Field(default="", max_length=100)
+    year: str = Field(default="", max_length=4)
+    art_base64: Optional[str] = None  # size validated separately
 
 
 # --- Endpoints ------------------------------------------------------------
@@ -596,9 +678,9 @@ Instructions — follow each one carefully:
    c. Unofficial/best-effort romanization as a last resort
    In all cases, strip ALL YouTube noise: "(Official Video)", "[Official Audio]", "(Lyric Video)", "(4K)", "HD", "MV", "M/V", "Official MV", "Official", "(HQ)", "(Performance Video)", "(Visualizer)", "(Live)", etc. Keep featuring artists.
 
-2. **album**: Use the official album or EP name exactly as it appears on Apple Music or Spotify. Return "" only if the track is not found on either platform.
+2. **album**: Use the official album or EP name as it appears on Apple Music or Spotify, but strip any release-type suffixes. Remove trailing " - Single", " - EP", " - LP", " (Single)", " (EP)", " (LP)" and any similar parenthetical or dash-separated release-type labels. Return just the bare title (e.g. "Supernova" not "Supernova - Single"). Return "" only if the track is not found on either platform.
 
-3. **track_number**: The track's position on the album as listed on Apple Music or Spotify, in the format "N" or "N/Total" (e.g. "3" or "3/12"). Return "" only if unknown.
+3. **track_number**: The track's position on the album as listed on Apple Music or Spotify. Return a single integer only (e.g. "3"). Do not include the total track count or any slash notation. Return "" only if unknown.
 
 4. **artist / album_artist**: Use the exact artist name formatting from Apple Music or Spotify (e.g. correct capitalisation, spacing). Return unchanged if already correct.
 
@@ -684,16 +766,30 @@ Return ONLY a JSON object with exactly these keys: title, artist, album, album_a
     def _s(val, max_len: int = 500) -> str:
         return str(val).strip()[:max_len] if val else ""
 
+    raw_album = _s(suggestions.get("album"), 500)
+    raw_album = re.sub(
+        r"\s*[-–]\s*(Single|EP|LP)\s*$",
+        "",
+        raw_album,
+        flags=re.IGNORECASE,
+    )
+    raw_album = re.sub(
+        r"\s*\((Single|EP|LP)\)\s*$",
+        "",
+        raw_album,
+        flags=re.IGNORECASE,
+    ).strip()
+
     raw_year = _s(suggestions.get("year"), 4)
     year = raw_year if re.match(r"^\d{4}$", raw_year) else ""
 
-    raw_track = _s(suggestions.get("track_number"), 20)
-    track_number = raw_track if re.match(r"^\d+(/\d+)?$", raw_track) else ""
+    raw_track = _s(suggestions.get("track_number"), 20).split("/")[0].strip()
+    track_number = raw_track if re.match(r"^\d+$", raw_track) else ""
 
     return {
         "title": _s(suggestions.get("title"), 500),
         "artist": _s(suggestions.get("artist"), 500),
-        "album": _s(suggestions.get("album"), 500),
+        "album": raw_album,
         "album_artist": _s(suggestions.get("album_artist"), 500),
         "year": year,
         "track_number": track_number,
@@ -714,6 +810,83 @@ async def cancel_download(request: Request, file_id: str):
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+# --- Auth endpoints -------------------------------------------------------
+
+@app.post("/api/auth/login")
+@limiter.limit("10/minute")
+async def login(request: Request, req: LoginRequest):
+    if not ADMIN_USERNAME or not ADMIN_PASSWORD or not JWT_SECRET:
+        raise HTTPException(status_code=503, detail="Admin account is not configured")
+    username_ok = hmac.compare_digest(req.username, ADMIN_USERNAME)
+    password_ok = hmac.compare_digest(req.password, ADMIN_PASSWORD)
+    if not (username_ok and password_ok):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    return {"token": _create_token()}
+
+
+@app.get("/api/auth/me")
+async def auth_me(_: None = Depends(require_admin)):
+    return {"username": ADMIN_USERNAME}
+
+
+# --- Admin config endpoints ----------------------------------------------
+
+@app.get("/api/admin/mappings")
+async def get_mappings(_: None = Depends(require_admin)):
+    config = await _load_config()
+    return config.get("mappings", [])
+
+
+@app.put("/api/admin/mappings")
+async def put_mapping(record: AdminMappingRecord, _: None = Depends(require_admin)):
+    config = await _load_config()
+    mappings: list = config.get("mappings", [])
+    mappings = [m for m in mappings if m["raw"] != record.raw]
+    mappings.append({"raw": record.raw, "display": record.display})
+    config["mappings"] = mappings
+    await _save_config(config)
+    return {"ok": True}
+
+
+@app.delete("/api/admin/mappings/{raw}")
+async def delete_mapping(raw: str, _: None = Depends(require_admin)):
+    if len(raw) > 500:
+        raise HTTPException(status_code=400, detail="raw too long")
+    config = await _load_config()
+    config["mappings"] = [m for m in config.get("mappings", []) if m["raw"] != raw]
+    await _save_config(config)
+    return {"ok": True}
+
+
+@app.get("/api/admin/albums")
+async def get_albums(_: None = Depends(require_admin)):
+    config = await _load_config()
+    return config.get("albums", [])
+
+
+@app.put("/api/admin/albums")
+async def put_album(record: AdminAlbumRecord, _: None = Depends(require_admin)):
+    if record.art_base64 and len(record.art_base64) > MAX_ALBUM_ART_B64_BYTES:
+        raise HTTPException(status_code=400, detail="Album art too large (max ~5 MB)")
+    config = await _load_config()
+    albums: list = config.get("albums", [])
+    albums = [a for a in albums if a["id"] != record.id]
+    albums.append(record.model_dump())
+    config["albums"] = albums
+    await _save_config(config)
+    return {"ok": True}
+
+
+@app.delete("/api/admin/albums/{album_id}")
+async def delete_album(album_id: str, _: None = Depends(require_admin)):
+    if len(album_id) > 500:
+        raise HTTPException(status_code=400, detail="album_id too long")
+    config = await _load_config()
+    config["albums"] = [a for a in config.get("albums", []) if a["id"] != album_id]
+    await _save_config(config)
+    return {"ok": True}
 
 
 # Serve the React SPA — only active when the production build is present.
