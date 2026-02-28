@@ -55,6 +55,13 @@ Browser  →  Vite dev server (port 5173)
 
 ---
 
+## Running the app
+
+- **On your own machine (with internet access)** — [Self-hosting guide](docs/SELF-HOST.md): run with Docker or Python, then expose via Cloudflare Tunnel or port forwarding + HTTPS.
+- **On Fly.io** — [Deploy to Fly.io](docs/DEPLOY.md): one-command deploy with persistent storage and secrets.
+
+---
+
 ## Legal Notice
 
 TuneForge is intended for **personal use only**. Only download content you have the right to use. Please respect copyright law and YouTube's [Terms of Service](https://www.youtube.com/t/terms).
