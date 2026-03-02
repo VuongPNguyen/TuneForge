@@ -591,16 +591,18 @@ async def save_with_tags(request: Request, req: SaveRequest):
         logger.exception("Failed to write ID3 tags for file_id=%s", req.file_id)
         raise HTTPException(status_code=500, detail="Failed to write tags. Please try again.")
 
-    safe_filename = _safe_filename(req.filename or "download") + ".mp3"
-    encoded_filename = urlquote(safe_filename)
+    display_filename = _safe_filename(req.filename or "download") + ".mp3"
+    encoded_filename = urlquote(display_filename)
+    latin1_fallback = (
+        display_filename.encode("latin-1", "ignore").decode("latin-1") or "download.mp3"
+    )
 
     return FileResponse(
         path=str(mp3_path),
         media_type="audio/mpeg",
-        filename=safe_filename,
         headers={
             "Content-Disposition": (
-                f'attachment; filename="{safe_filename}"; '
+                f'attachment; filename="{latin1_fallback}"; '
                 f"filename*=UTF-8''{encoded_filename}"
             )
         },
