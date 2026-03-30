@@ -1,0 +1,17 @@
+- Put the youtube link in the comments.
+- Streamline artist mapping.
+  - Autofill the current mapping without the manual part.
+  - Auto-apply the mapping.
+- Add auto-complete on genres.
+- Optimize interaction between AI-autofill and configuration autofill.
+  - Struggles with covers of songs.
+  - Does quickly save albums.
+- Change locking fields to having them enabled but automatically change when the linked field is changed.
+  - Big issue when a cover has a custom name.
+- Fix container issue for docker. Does not seem permanent.
+- Fix save album
+- Multiple Artists should be separated by a slash "/"
+- Extract the desired youtube link from an untrimmed link.
+- Bad image link gives bad error.
+- Be able to parse the link and snip out bad parameters.
+  - A playlist has list=, so the webapp should auto crop the link.
