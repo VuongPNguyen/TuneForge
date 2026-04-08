@@ -90,6 +90,10 @@ export default function App() {
     setAlbumAutofilled(false);
     try {
       const data = await downloadVideo(url, bitrate);
+      // Preserve the original channel names before we apply any saved mappings.
+      // This lets the user add/edit mappings using the true original names.
+      const originalArtist = data.artist;
+      const originalAlbumArtist = data.album_artist;
 
       if (isAdmin) {
         // Use in-memory admin mappings
@@ -127,6 +131,8 @@ export default function App() {
         }
       }
 
+      data.original_artist = originalArtist;
+      data.original_album_artist = originalAlbumArtist;
       setMetadata(data);
       setStep('tagging');
     } catch (err) {
@@ -147,7 +153,8 @@ export default function App() {
     setIsSaving(true);
     setError(null);
     try {
-      const rawFilename = [tags.artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
+      const rawFilename =
+        [tags.album_artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
       const filename = safeFilename(rawFilename);
       const blob = await saveWithTags(metadata.file_id, tags, filename);
       const fullFilename = filename + '.mp3';
