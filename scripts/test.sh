@@ -60,16 +60,16 @@ run_suite() {
 if [ "$ONLY_E2E" = false ]; then
   section "Backend tests  (pytest)"
 
-  if [ ! -d "$ROOT/backend/venv" ]; then
-    echo -e "${RED}Error:${RESET} backend/venv not found."
-    echo "  Fix: cd backend && python3 -m venv venv && pip install -r requirements.txt"
+  if [ ! -d "$ROOT/.venv" ]; then
+    echo -e "${RED}Error:${RESET} .venv not found."
+    echo "  Fix: python3 -m venv .venv && source .venv/bin/activate && pip install -r backend/requirements.txt"
     exit 1
   fi
 
   run_suite "Backend unit & integration" \
-    bash -c "source '$ROOT/backend/venv/bin/activate' \
+    bash -c "source '$ROOT/.venv/bin/activate' \
              && cd '$ROOT/backend' \
-             && python -m pytest tests/ -v"
+             && python3 -m pytest tests/ -v"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────

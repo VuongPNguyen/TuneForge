@@ -420,9 +420,7 @@ FodyWeavers.xsd
 # --- Project-specific ---
 
 # Python virtual environment
-venv/
 .venv/
-backend/venv/
 
 # Temporary converted audio files (kept as an empty tracked directory via .gitkeep)
 backend/temp/*
