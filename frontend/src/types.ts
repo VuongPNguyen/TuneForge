@@ -4,6 +4,10 @@ export interface DownloadMetadata {
   artist: string;
   album: string;
   album_artist: string;
+  // Preserved "raw" names before any saved mappings were applied.
+  // Used to prefill Artist Name Mappings so the user can map the original channel names.
+  original_artist?: string;
+  original_album_artist?: string;
   year: string;
   track_number: string;
   genre: string;

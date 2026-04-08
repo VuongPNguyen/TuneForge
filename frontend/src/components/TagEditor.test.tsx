@@ -85,6 +85,64 @@ describe('TagEditor rendering', () => {
     expect(screen.getByText('3:05')).toBeInTheDocument();
   });
 
+  it('prefills Artist Name Mapping channel field with current artist', async () => {
+    const user = userEvent.setup();
+    setup();
+
+    // Switch to Music tab
+    await user.click(screen.getByRole('button', { name: /music/i }));
+
+    // Expand Artist Name Mappings section
+    await user.click(screen.getByRole('button', { name: /artist name mappings/i }));
+
+    // The "Channel name (exact)" input should be prefilled with the current artist
+    const channelInput = screen.getByPlaceholderText(/channel name \(exact\)/i) as HTMLInputElement;
+    expect(channelInput.value).toBe('Test Artist');
+  });
+
+  it('prefills Artist Name Mapping channel field with original artist', async () => {
+    const user = userEvent.setup();
+    setup({ artist: 'Mapped Display', original_artist: 'Original Channel' });
+
+    // Switch to Music tab
+    await user.click(screen.getByRole('button', { name: /music/i }));
+
+    // Expand Artist Name Mappings section
+    await user.click(screen.getByRole('button', { name: /artist name mappings/i }));
+
+    // "Channel name (exact)" should use the preserved original channel name
+    const channelInput = screen.getByPlaceholderText(/channel name \(exact\)/i) as HTMLInputElement;
+    expect(channelInput.value).toBe('Original Channel');
+  });
+
+  it('updates current artist and album artist after adding mapping', async () => {
+    const user = userEvent.setup();
+    setup({ artist: 'Test Artist', album_artist: 'Test Artist' });
+
+    // Switch to Music tab
+    await user.click(screen.getByRole('button', { name: /music/i }));
+
+    // Expand Artist Name Mappings section
+    await user.click(screen.getByRole('button', { name: /artist name mappings/i }));
+
+    const artistInput = screen.getByPlaceholderText('Artist name') as HTMLInputElement;
+    const albumArtistInput = screen.getByPlaceholderText('Album artist name') as HTMLInputElement;
+    expect(artistInput.value).toBe('Test Artist');
+    expect(albumArtistInput.value).toBe('Test Artist');
+
+    // "Channel name (exact)" is prefilled; we only need to set display name.
+    const displayInput = screen.getByPlaceholderText(/display name/i) as HTMLInputElement;
+    await user.clear(displayInput);
+    await user.type(displayInput, 'Mapped Display');
+
+    await user.click(screen.getByRole('button', { name: /add/i }));
+
+    await waitFor(() => {
+      expect(artistInput.value).toBe('Mapped Display');
+      expect(albumArtistInput.value).toBe('Mapped Display');
+    });
+  });
+
   it('does not show a remove button when there is no art', () => {
     setup({ thumbnail_b64: null });
     expect(screen.queryByRole('button', { name: /remove/i })).not.toBeInTheDocument();

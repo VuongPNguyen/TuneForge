@@ -130,6 +130,16 @@ export default function TagEditor({
   // True when a music mode is active that auto-computes certain fields
   const isSmartMode = activeTab === 'music' && (musicMode === 'covers' || musicMode === 'singles');
 
+  // When opening Artist Name Mappings, prefill the "Channel name (exact)" field
+  // with the original channel name so users don't need to copy/paste it manually.
+  useEffect(() => {
+    if (!mappingsExpanded) return;
+    if (newRaw.trim()) return;
+    const originalArtist = (metadata.original_artist ?? tags.artist).trim();
+    if (!originalArtist) return;
+    setNewRaw(originalArtist);
+  }, [mappingsExpanded, newRaw, tags.artist, metadata.original_artist]);
+
   // Load albums on mount so live matching works before the Music tab is opened
   useEffect(() => {
     if (isAdmin) return; // seeded from initialAlbums prop
@@ -406,6 +416,38 @@ export default function TagEditor({
       : [...mappings, { raw, display }];
     setMappings(next);
     onMappingsChange?.(next);
+
+    // Immediately update the currently edited tag fields so the user sees the
+    // mapping take effect without waiting for the next download.
+    setTags((prev) => {
+      const artistWasSyncedToAlbumArtist = prev.artist === prev.album_artist;
+      const albumWasDerivedFromAlbumArtist =
+        prev.album_artist ? prev.album === `${prev.album_artist} Covers` : prev.album === '';
+
+      const artist = prev.artist === raw ? display : prev.artist;
+      const album_artist = prev.album_artist === raw ? display : prev.album_artist;
+
+      if (musicMode === 'covers') {
+        // In covers mode, artist usually follows album_artist. Preserve that behavior
+        // only if it was already in sync before applying this mapping.
+        const nextArtist = artistWasSyncedToAlbumArtist ? album_artist : artist;
+        const nextAlbum = albumWasDerivedFromAlbumArtist
+          ? (album_artist ? `${album_artist} Covers` : '')
+          : prev.album;
+
+        return { ...prev, artist: nextArtist, album_artist, album: nextAlbum };
+      }
+
+      if (musicMode === 'singles') {
+        // In singles mode, artist usually follows album_artist. Preserve that behavior
+        // only if it was already in sync before applying this mapping.
+        const nextArtist = artistWasSyncedToAlbumArtist ? album_artist : artist;
+        return { ...prev, artist: nextArtist, album_artist };
+      }
+
+      return { ...prev, artist, album_artist };
+    });
+
     setNewRaw('');
     setNewDisplay('');
   }
