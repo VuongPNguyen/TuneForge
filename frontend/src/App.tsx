@@ -12,7 +12,7 @@ import {
   getAdminAlbums,
   getAiStatus,
 } from './api';
-import { lookupArtist, lookupAlbum, blobToBase64 } from './db';
+import { lookupArtist, lookupAlbum, blobToBase64, rememberGenre } from './db';
 import { safeFilename } from './utils/filename';
 import type { AppStep, DownloadMetadata, ID3Tags } from './types';
 import type { ArtistMapping, AlbumRecord } from './db';
@@ -146,6 +146,9 @@ export default function App() {
 
     if (savedFile && JSON.stringify(savedFile.tags) === JSON.stringify(tags)) {
       triggerDownload(savedFile.blob, savedFile.filename);
+      if (tags.genre.trim()) {
+        void rememberGenre(tags.genre);
+      }
       return;
     }
 
@@ -160,6 +163,9 @@ export default function App() {
       const fullFilename = filename + '.mp3';
       setSavedFile({ blob, filename: fullFilename, tags });
       triggerDownload(blob, fullFilename);
+      if (tags.genre.trim()) {
+        void rememberGenre(tags.genre);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed');
     } finally {

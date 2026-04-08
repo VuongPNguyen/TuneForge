@@ -1,9 +1,9 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Music, User, Disc, Users, Calendar, Hash, Tag,
   Image as ImageIcon, Upload, X, Download, RotateCcw, Loader2,
   Lock, Link2, Wand2, BookmarkPlus, Check, AlertCircle,
-  ArrowRight, Plus, Trash2, ChevronDown, Sparkles,
+  ArrowRight, Plus, Trash2, ChevronDown, Sparkles, List,
 } from 'lucide-react';
 import type { DownloadMetadata, ID3Tags } from '../types';
 import { fetchImageFromUrl, aiAutofill } from '../api';
@@ -14,13 +14,14 @@ import {
 import {
   getArtistMappings, putArtistMapping, deleteArtistMapping,
   getAlbums, deleteAlbum, putAlbum, albumKey, blobToBase64,
+  getGenreNames, putGenreName, deleteGenreName, renameGenreName,
   type ArtistMapping, type AlbumRecord,
 } from '../db';
 import { safeFilename as sanitizeFilename } from '../utils/filename';
 
 interface Props {
   metadata: DownloadMetadata;
-  onSave: (tags: ID3Tags) => void;
+  onSave: (tags: ID3Tags) => void | Promise<void>;
   isSaving: boolean;
   onReset: () => void;
   albumAutofilled?: boolean;
@@ -34,7 +35,7 @@ interface Props {
 }
 
 interface FieldConfig {
-  key: keyof Omit<ID3Tags, 'album_art_base64'>;
+  key: keyof Omit<ID3Tags, 'album_art_base64' | 'comment'>;
   label: string;
   placeholder: string;
   icon: React.ReactNode;
@@ -51,6 +52,8 @@ const FIELDS: FieldConfig[] = [
   { key: 'track_number', label: 'Track Number', placeholder: 'e.g. 1 or 1/12', icon: <Hash className="w-4 h-4" /> },
   { key: 'genre', label: 'Genre', placeholder: 'e.g. Electronic', icon: <Tag className="w-4 h-4" /> },
 ];
+
+const NON_GENRE_FIELDS = FIELDS.filter((f) => f.key !== 'genre');
 
 type MusicMode = 'covers' | 'singles' | 'albums';
 type ActiveTab = 'default' | 'music';
@@ -83,6 +86,7 @@ export default function TagEditor({
     year: metadata.year || '',
     track_number: metadata.track_number || '',
     genre: metadata.genre || '',
+    comment: metadata.webpage_url || '',
     album_art_base64: metadata.thumbnail_b64 || null,
   });
 
@@ -127,6 +131,12 @@ export default function TagEditor({
   const [newDisplay, setNewDisplay] = useState('');
   const [addMappingError, setAddMappingError] = useState<string | null>(null);
 
+  const [savedGenres, setSavedGenres] = useState<string[]>([]);
+  const [genreLibraryOpen, setGenreLibraryOpen] = useState(false);
+  const [genreEdits, setGenreEdits] = useState<Record<string, string>>({});
+  const [newSavedGenre, setNewSavedGenre] = useState('');
+  const genreInputRef = useRef<HTMLInputElement>(null);
+
   // True when a music mode is active that auto-computes certain fields
   const isSmartMode = activeTab === 'music' && (musicMode === 'covers' || musicMode === 'singles');
 
@@ -145,6 +155,19 @@ export default function TagEditor({
     if (isAdmin) return; // seeded from initialAlbums prop
     getAlbums().then(setAlbums);
   }, [isAdmin]);
+
+  const refreshSavedGenres = useCallback(async () => {
+    setSavedGenres(await getGenreNames());
+  }, []);
+
+  useEffect(() => {
+    void refreshSavedGenres();
+  }, [metadata.file_id, refreshSavedGenres]);
+
+  useEffect(() => {
+    if (!genreLibraryOpen) return;
+    void refreshSavedGenres();
+  }, [genreLibraryOpen, refreshSavedGenres]);
 
   // ── Load settings whenever the Music tab is entered ────────────────────────
   useEffect(() => {
@@ -210,7 +233,7 @@ export default function TagEditor({
   }, [albums]);
 
   // ── Tag field handlers ─────────────────────────────────────────────────────
-  function handleField(key: keyof Omit<ID3Tags, 'album_art_base64'>, value: string) {
+  function handleField(key: keyof Omit<ID3Tags, 'album_art_base64' | 'comment'>, value: string) {
     if (activeTab === 'music' && musicMode) {
       setTags((prev) => {
         const next = { ...prev, [key]: value };
@@ -483,9 +506,84 @@ export default function TagEditor({
     setArtPreview(preview);
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  const genreCompletion = useMemo(() => {
+    const raw = tags.genre;
+    const lower = raw.toLowerCase();
+    if (!lower) return { full: '', suffix: '' as string };
+    const match = savedGenres.find((g) => {
+      const gl = g.toLowerCase();
+      return gl.startsWith(lower) && gl !== lower;
+    });
+    if (!match) return { full: '', suffix: '' };
+    return { full: match, suffix: match.slice(raw.length) };
+  }, [tags.genre, savedGenres]);
+
+  function applyGenreCompletion() {
+    if (!genreCompletion.full) return;
+    handleField('genre', genreCompletion.full);
+    requestAnimationFrame(() => {
+      const el = genreInputRef.current;
+      if (!el) return;
+      const len = genreCompletion.full.length;
+      el.setSelectionRange(len, len);
+    });
+  }
+
+  function handleGenreKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!genreCompletion.suffix) return;
+    if (e.key === 'Tab') {
+      if (e.shiftKey) return;
+      e.preventDefault();
+      applyGenreCompletion();
+      return;
+    }
+    if (e.key === 'ArrowRight') {
+      const el = e.currentTarget;
+      const end = el.value.length;
+      if (el.selectionStart === end && el.selectionEnd === end) {
+        e.preventDefault();
+        applyGenreCompletion();
+      }
+    }
+  }
+
+  async function handleGenreRowBlur(original: string) {
+    const edited = genreEdits[original];
+    if (edited === undefined) return;
+    const trimmed = edited.trim();
+    setGenreEdits((prev) => {
+      const n = { ...prev };
+      delete n[original];
+      return n;
+    });
+    if (!trimmed || trimmed === original) return;
+    await renameGenreName(original, trimmed);
+    await refreshSavedGenres();
+    setTags((prev) => (prev.genre === original ? { ...prev, genre: trimmed } : prev));
+  }
+
+  async function handleAddSavedGenre() {
+    const t = newSavedGenre.trim();
+    if (!t) return;
+    await putGenreName(t);
+    setNewSavedGenre('');
+    await refreshSavedGenres();
+  }
+
+  async function handleDeleteSavedGenre(name: string) {
+    await deleteGenreName(name);
+    setGenreEdits((prev) => {
+      const n = { ...prev };
+      delete n[name];
+      return n;
+    });
+    await refreshSavedGenres();
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    onSave(tags);
+    await Promise.resolve(onSave(tags));
+    await refreshSavedGenres();
   }
 
   async function handleAiAutofill() {
@@ -1037,7 +1135,7 @@ export default function TagEditor({
 
         {/* Tag fields */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {FIELDS.map((field) => {
+          {NON_GENRE_FIELDS.map((field) => {
             const isLocked = field.key === 'album' && isSmartMode;
             const isArtistSynced = field.key === 'artist' && isSmartMode;
 
@@ -1075,7 +1173,166 @@ export default function TagEditor({
               </div>
             );
           })}
+
+          {/* Genre with saved-genre autocomplete */}
+          <div>
+            <label
+              htmlFor="tag-genre"
+              className="flex items-center gap-2 text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide"
+            >
+              <span className="text-slate-500">
+                <Tag className="w-4 h-4" />
+              </span>
+              Genre
+            </label>
+            <div
+              className={`group/genre relative w-full rounded-xl border text-sm outline-none transition-all
+                bg-white/5 border-white/10 focus-within:border-brand-500/60 focus-within:bg-white/8
+                ${isSaving ? 'opacity-50' : ''}`}
+            >
+              <div className="relative px-4 py-3 pr-11">
+                {genreCompletion.suffix !== '' && (
+                  <span
+                    className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 flex text-sm whitespace-pre"
+                    aria-hidden
+                  >
+                    <span className="invisible">{tags.genre}</span>
+                    <span className="text-brand-400 font-semibold tracking-tight drop-shadow-[0_0_10px_rgba(52,211,153,0.45)]">
+                      {genreCompletion.suffix}
+                    </span>
+                  </span>
+                )}
+                <input
+                  ref={genreInputRef}
+                  type="text"
+                  id="tag-genre"
+                  value={tags.genre}
+                  onChange={(e) => handleField('genre', e.target.value)}
+                  onKeyDown={handleGenreKeyDown}
+                  placeholder="e.g. Electronic"
+                  maxLength={100}
+                  disabled={isSaving}
+                  aria-autocomplete="inline"
+                  aria-controls={genreCompletion.suffix ? 'genre-completion-hint' : undefined}
+                  className="relative z-10 w-full bg-transparent text-sm text-white placeholder-slate-600 outline-none
+                    disabled:cursor-not-allowed"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setGenreLibraryOpen(true)}
+                disabled={isSaving}
+                title="Manage saved genres"
+                className="absolute right-2 top-1/2 -translate-y-1/2 z-20 inline-flex items-center justify-center
+                  w-8 h-8 rounded-lg text-slate-500 hover:text-brand-300 hover:bg-brand-600/15
+                  border border-transparent hover:border-brand-500/25 transition-all cursor-pointer
+                  disabled:opacity-40 disabled:cursor-not-allowed"
+                aria-label="Manage saved genres"
+              >
+                <List className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            {genreCompletion.suffix !== '' && (
+              <p id="genre-completion-hint" className="mt-1.5 text-[11px] text-brand-400/90 font-medium">
+                Preview: {genreCompletion.full}
+                <span className="text-slate-500 font-normal"> · Tab or → to apply</span>
+              </p>
+            )}
+          </div>
         </div>
+
+        {genreLibraryOpen && (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="genre-library-title"
+            onClick={() => setGenreLibraryOpen(false)}
+          >
+            <div
+              className="w-full max-w-md max-h-[min(80vh,520px)] flex flex-col rounded-2xl bg-slate-900 border border-white/10 shadow-xl shadow-black/40"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+                <h3 id="genre-library-title" className="text-sm font-semibold text-white">
+                  Saved genres
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setGenreLibraryOpen(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/8 transition-colors cursor-pointer"
+                  aria-label="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <p className="px-4 pt-3 text-xs text-slate-500 leading-relaxed">
+                Genres are remembered when you save and download a track. Edit names or remove entries you no longer need.
+              </p>
+              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5 min-h-0">
+                {savedGenres.length === 0 ? (
+                  <p className="text-sm text-slate-600 py-2">No genres saved yet — download a track with a genre to build this list.</p>
+                ) : (
+                  savedGenres.map((name) => (
+                    <div
+                      key={name}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/3 border border-white/6"
+                    >
+                      <input
+                        type="text"
+                        value={genreEdits[name] ?? name}
+                        onChange={(e) =>
+                          setGenreEdits((prev) => ({ ...prev, [name]: e.target.value }))
+                        }
+                        onBlur={() => void handleGenreRowBlur(name)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                        className="flex-1 min-w-0 bg-transparent text-sm text-white outline-none
+                          border-b border-transparent hover:border-white/20 focus:border-brand-500/60
+                          transition-colors px-0.5"
+                        aria-label={`Edit genre ${name}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteSavedGenre(name)}
+                        className="text-slate-600 hover:text-red-400 transition-colors cursor-pointer flex-shrink-0"
+                        aria-label={`Delete genre ${name}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="px-4 pb-4 pt-1 border-t border-white/10 space-y-2">
+                <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Add genre</p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={newSavedGenre}
+                    onChange={(e) => setNewSavedGenre(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') void handleAddSavedGenre(); }}
+                    placeholder="New genre name"
+                    maxLength={100}
+                    className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10
+                      text-white text-sm placeholder-slate-600 outline-none
+                      focus:border-brand-500/60 focus:bg-white/8 transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleAddSavedGenre()}
+                    disabled={!newSavedGenre.trim()}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-brand-600/20 border border-brand-500/30
+                      text-brand-300 hover:bg-brand-600/30 transition-all text-sm font-medium
+                      cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Output filename preview */}
         <div className="px-4 py-3 rounded-xl bg-white/3 border border-white/8">

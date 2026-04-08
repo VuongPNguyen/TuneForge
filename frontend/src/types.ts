@@ -24,6 +24,7 @@ export interface ID3Tags {
   year: string;
   track_number: string;
   genre: string;
+  comment: string;
   album_art_base64: string | null;
 }
 
