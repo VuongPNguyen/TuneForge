@@ -39,12 +39,13 @@ fi
 
 # ── Backend ──────────────────────────────────────────────────────────────────
 echo -e "${CYAN}[backend]${RESET} Activating virtual environment…"
-if [ ! -d "$ROOT/backend/venv" ]; then
-  echo -e "${RED}Error:${RESET} backend/venv not found. Run: cd backend && python3 -m venv venv && pip install -r requirements.txt"
+if [ ! -d "$ROOT/.venv" ]; then
+  echo -e "${RED}Error:${RESET} .venv not found."
+  echo "  Fix: python3 -m venv .venv && source .venv/bin/activate && pip install -r backend/requirements.txt"
   exit 1
 fi
 
-source "$ROOT/backend/venv/bin/activate"
+source "$ROOT/.venv/bin/activate"
 cd "$ROOT/backend"
 
 # Wrap in { } & so the subshell is the process group leader ($! == PGID).
