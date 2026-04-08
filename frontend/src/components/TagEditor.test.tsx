@@ -169,14 +169,14 @@ describe('TagEditor field editing', () => {
     expect(screen.getByText(/Test Artist - New Title\.mp3/)).toBeInTheDocument();
   });
 
-  it('updates the filename preview when artist changes', async () => {
+  it('updates the filename preview when album artist changes', async () => {
     const user = userEvent.setup();
     setup();
-    const artistInputs = screen.getAllByDisplayValue('Test Artist');
-    await user.clear(artistInputs[0]);
-    await user.type(artistInputs[0], 'New Artist');
+    const albumArtistInput = screen.getByPlaceholderText('Album artist name');
+    await user.clear(albumArtistInput);
+    await user.type(albumArtistInput, 'New Album Artist');
     await waitFor(() => {
-      expect(screen.getByText(/New Artist - Test Track\.mp3/)).toBeInTheDocument();
+      expect(screen.getByText(/New Album Artist - Test Track\.mp3/)).toBeInTheDocument();
     });
   });
 });

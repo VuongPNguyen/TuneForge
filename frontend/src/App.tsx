@@ -153,7 +153,8 @@ export default function App() {
     setIsSaving(true);
     setError(null);
     try {
-      const rawFilename = [tags.artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
+      const rawFilename =
+        [tags.album_artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
       const filename = safeFilename(rawFilename);
       const blob = await saveWithTags(metadata.file_id, tags, filename);
       const fullFilename = filename + '.mp3';

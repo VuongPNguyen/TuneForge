@@ -549,7 +549,8 @@ export default function TagEditor({
     }
   }
 
-  const rawFilename = [tags.artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
+  const rawFilename =
+    [tags.album_artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
   const safeFilename = sanitizeFilename(rawFilename);
 
   // ── Render ─────────────────────────────────────────────────────────────────
