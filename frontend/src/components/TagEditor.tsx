@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Music, User, Disc, Users, Calendar, Hash, Tag,
   Image as ImageIcon, Upload, X, Download, RotateCcw, Loader2,
-  Lock, Link2, Wand2, BookmarkPlus, Check, AlertCircle,
+  Link2, Wand2, BookmarkPlus, Check, AlertCircle,
   ArrowRight, Plus, Trash2, ChevronDown, Sparkles, List,
 } from 'lucide-react';
 import type { DownloadMetadata, ID3Tags } from '../types';
@@ -59,8 +59,8 @@ type MusicMode = 'covers' | 'singles' | 'albums';
 type ActiveTab = 'default' | 'music';
 
 const MODE_DESCRIPTIONS: Record<MusicMode, string> = {
-  covers: 'Artist and album auto-sync to the album artist — e.g. "tripleS Covers"',
-  singles: 'Album title mirrors the track title; artist follows album artist',
+  covers: 'Artist and album start from the album artist (editable; they update again when it changes)',
+  singles: 'Album mirrors title and artist mirrors album artist (both editable; they update when the parent changes)',
   albums: 'Bookmark genre, year and art so they autofill on future downloads',
 };
 
@@ -1136,24 +1136,33 @@ export default function TagEditor({
         {/* Tag fields */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {NON_GENRE_FIELDS.map((field) => {
-            const isLocked = field.key === 'album' && isSmartMode;
-            const isArtistSynced = field.key === 'artist' && isSmartMode;
+            const smartChildHint =
+              isSmartMode && field.key === 'artist'
+                ? 'Syncs when Album Artist changes — editable'
+                : isSmartMode && field.key === 'album' && musicMode === 'covers'
+                  ? 'Syncs when Album Artist changes — editable'
+                  : isSmartMode && field.key === 'album' && musicMode === 'singles'
+                    ? 'Syncs when Title changes — editable'
+                    : null;
 
             return (
               <div key={field.key} className={field.key === 'title' ? 'sm:col-span-2' : ''}>
                 <label className="flex items-center gap-2 text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">
                   <span className="text-slate-500">{field.icon}</span>
                   {field.label}
-                  {isLocked && (
-                    <span className="ml-auto flex items-center gap-1 text-slate-600 normal-case font-normal tracking-normal">
-                      <Lock className="w-3 h-3" />
-                      <span className="text-[10px]">auto</span>
-                    </span>
-                  )}
-                  {isArtistSynced && (
-                    <span className="ml-auto flex items-center gap-1 text-slate-600 normal-case font-normal tracking-normal">
-                      <Link2 className="w-3 h-3" />
-                      <span className="text-[10px]">follows Album Artist</span>
+                  {smartChildHint && (
+                    <span
+                      title={smartChildHint}
+                      className="ml-auto flex items-center gap-1 text-slate-600 normal-case font-normal tracking-normal max-w-[min(100%,11rem)]"
+                    >
+                      <Link2 className="w-3 h-3 flex-shrink-0" />
+                      <span className="text-[10px] leading-tight line-clamp-2">
+                        {field.key === 'artist'
+                          ? 'linked to Album Artist'
+                          : musicMode === 'covers'
+                            ? 'linked to Album Artist'
+                            : 'linked to Title'}
+                      </span>
                     </span>
                   )}
                 </label>
@@ -1163,12 +1172,10 @@ export default function TagEditor({
                   onChange={(e) => handleField(field.key, e.target.value)}
                   placeholder={field.placeholder}
                   maxLength={field.maxLength}
-                  disabled={isSaving || isLocked}
-                  className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all
-                    ${isLocked
-                      ? 'bg-white/3 border-white/5 text-slate-400 cursor-not-allowed placeholder-slate-700'
-                      : 'bg-white/5 border-white/10 text-white placeholder-slate-600 focus:border-brand-500/60 focus:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed'
-                    }`}
+                  disabled={isSaving}
+                  className="w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all
+                    bg-white/5 border-white/10 text-white placeholder-slate-600 focus:border-brand-500/60 focus:bg-white/8
+                    disabled:opacity-50 disabled:cursor-not-allowed"
                 />
               </div>
             );
