@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import TagEditor from './TagEditor';
 import type { DownloadMetadata } from '../types';
@@ -10,6 +10,8 @@ vi.mock('../api', () => ({
 }));
 import { fetchImageFromUrl } from '../api';
 const mockFetchImageFromUrl = vi.mocked(fetchImageFromUrl);
+import { getGenreNames } from '../db';
+const mockGetGenreNames = vi.mocked(getGenreNames);
 
 // Mock the db module so tests never touch IndexedDB (unavailable in JSDOM)
 vi.mock('../db', () => ({
@@ -21,6 +23,10 @@ vi.mock('../db', () => ({
   putAlbum: vi.fn().mockResolvedValue(undefined),
   albumKey: vi.fn((artist: string, album: string) => `${artist}::${album}`),
   blobToBase64: vi.fn().mockResolvedValue(''),
+  getGenreNames: vi.fn().mockResolvedValue([]),
+  putGenreName: vi.fn().mockResolvedValue(undefined),
+  deleteGenreName: vi.fn().mockResolvedValue(undefined),
+  renameGenreName: vi.fn().mockResolvedValue(undefined),
 }));
 
 const BASE_METADATA: DownloadMetadata = {
@@ -321,6 +327,7 @@ describe('TagEditor form submission', () => {
     expect(tags.title).toBe('Test Track');
     expect(tags.artist).toBe('Test Artist');
     expect(tags.year).toBe('2024');
+    expect(tags.comment).toBe(BASE_METADATA.webpage_url);
   });
 
   it('does not submit when the outer form Enter key is pressed inside the URL input', async () => {
@@ -349,5 +356,43 @@ describe('TagEditor form submission', () => {
     );
     const btn = screen.getByRole('button', { name: /saving/i });
     expect(btn).toBeDisabled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Genre autocomplete
+// ---------------------------------------------------------------------------
+
+describe('TagEditor genre autocomplete', () => {
+  beforeEach(() => {
+    mockGetGenreNames.mockResolvedValue(['Synth-pop']);
+  });
+
+  it('shows an obvious preview and applies the saved genre on Tab', async () => {
+    const user = userEvent.setup();
+    setup({ genre: 'Synth' });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Preview: Synth-pop/i)).toBeInTheDocument();
+    });
+
+    const genreInput = document.getElementById('tag-genre') as HTMLInputElement;
+    await user.click(genreInput);
+    await user.keyboard('{Tab}');
+
+    expect(genreInput).toHaveValue('Synth-pop');
+  });
+
+  it('applies the saved genre when the caret is at the end and Right Arrow is pressed', async () => {
+    setup({ genre: 'Synth' });
+
+    await waitFor(() => expect(screen.getByText(/Preview: Synth-pop/i)).toBeInTheDocument());
+
+    const genreInput = document.getElementById('tag-genre') as HTMLInputElement;
+    genreInput.focus();
+    genreInput.setSelectionRange(5, 5);
+    fireEvent.keyDown(genreInput, { key: 'ArrowRight' });
+
+    expect(genreInput).toHaveValue('Synth-pop');
   });
 });

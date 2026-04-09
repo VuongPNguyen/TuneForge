@@ -13,6 +13,8 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from mutagen.id3 import ID3
+
 from main import app, TEMP_DIR
 
 client = TestClient(app)
@@ -150,12 +152,18 @@ class TestSaveEndpoint:
                     "year": "2024",
                     "track_number": "1",
                     "genre": "Electronic",
+                    "comment": "https://www.youtube.com/watch?v=abc123",
                     "album_art_base64": None,
                 },
                 "filename": "Test Artist - Test Song",
             })
             assert resp.status_code == 200
             assert resp.headers["content-type"] == "audio/mpeg"
+            written = ID3(str(TEMP_DIR / f"{file_id}.mp3"))
+            comm_texts = []
+            for frame in written.getall("COMM"):
+                comm_texts.extend(frame.text)
+            assert "https://www.youtube.com/watch?v=abc123" in comm_texts
         finally:
             (TEMP_DIR / f"{file_id}.mp3").unlink(missing_ok=True)
 

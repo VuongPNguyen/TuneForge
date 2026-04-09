@@ -30,7 +30,7 @@ from jose import jwt, JWTError
 
 import yt_dlp
 from mutagen.id3 import (
-    ID3, TIT2, TPE1, TALB, TPE2, TDRC, TRCK, TCON, APIC, ID3NoHeaderError
+    ID3, TIT2, TPE1, TALB, TPE2, TDRC, TRCK, TCON, APIC, COMM, ID3NoHeaderError
 )
 from PIL import Image
 import io
@@ -246,6 +246,7 @@ class ID3Tags(BaseModel):
     year: Optional[str] = Field(None, pattern=r"^\d{4}$")
     track_number: Optional[str] = Field(None, max_length=20)
     genre: Optional[str] = Field(None, max_length=100)
+    comment: Optional[str] = Field(None, max_length=2048)
     album_art_base64: Optional[str] = None  # Size validated separately
 
 
@@ -542,7 +543,7 @@ async def save_with_tags(request: Request, req: SaveRequest):
         except ID3NoHeaderError:
             tags = ID3()
 
-        for frame in ("TIT2", "TPE1", "TALB", "TPE2", "TDRC", "TRCK", "TCON", "APIC"):
+        for frame in ("TIT2", "TPE1", "TALB", "TPE2", "TDRC", "TRCK", "TCON", "APIC", "COMM"):
             tags.delall(frame)
 
         t = req.tags
@@ -560,6 +561,8 @@ async def save_with_tags(request: Request, req: SaveRequest):
             tags.add(TRCK(encoding=3, text=t.track_number))
         if t.genre:
             tags.add(TCON(encoding=3, text=t.genre))
+        if t.comment and t.comment.strip():
+            tags.add(COMM(encoding=3, lang="eng", desc="", text=t.comment.strip()))
         if t.album_art_base64:
             if len(t.album_art_base64) > MAX_ALBUM_ART_B64_BYTES:
                 raise HTTPException(status_code=400, detail="Album art too large (max ~5 MB)")
