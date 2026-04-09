@@ -5,8 +5,6 @@
 - Fix save album
 - Multiple Artists should be separated by a slash "/"
 - Bad image link gives bad error.
-- Extract the desired youtube link from an untrimmed link.
-  - A playlist has list=, so the webapp should auto crop the link.
 
 Complete:
 - 04/08/2026
@@ -18,3 +16,5 @@ Complete:
   - Put the youtube link in the comments.
   - Change locking fields to having them synced but able to edit after the fact.
     - Big issue when a cover has a custom name.
+  - Extract the desired youtube link from an untrimmed link.
+    - A playlist has list=, so the webapp should auto crop the link.
