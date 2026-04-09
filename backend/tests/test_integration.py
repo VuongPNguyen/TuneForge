@@ -20,6 +20,15 @@ from main import app, TEMP_DIR
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_storage():
+    """Avoid 429 from slowapi when many tests hit the same endpoint."""
+    import main as main_module
+
+    main_module.limiter._storage.reset()
+    yield
+
+
 def _make_jpeg_bytes(width: int = 10, height: int = 10) -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", (width, height), color=(200, 100, 50)).save(buf, format="JPEG")
@@ -61,7 +70,7 @@ class TestDownloadEndpoint:
     def test_rejects_invalid_bitrate(self):
         resp = client.post(
             "/api/download",
-            json={"url": "https://www.youtube.com/watch?v=abc", "bitrate": 999},
+            json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "bitrate": 999},
         )
         assert resp.status_code == 400
         assert "itrate" in resp.json()["detail"]
@@ -93,6 +102,39 @@ class TestDownloadEndpoint:
             )
         # DownloadError → 400; rate-limit (429) also means validation passed
         assert resp.status_code in (400, 429)
+
+    def test_download_passes_canonical_url_without_extra_query_params(self):
+        """Playlist-style URLs are normalized before yt-dlp."""
+        import asyncio as _asyncio
+        import yt_dlp
+        import main as main_module
+
+        called_urls = []
+
+        def capture(url, opts):
+            called_urls.append(url)
+            raise yt_dlp.utils.DownloadError("mocked")
+
+        playlist_url = (
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            "&list=PLuxt6DrBFfRO8pp7PgjgZ7Tqt3pFB9_Kv&index=3"
+        )
+        with patch.object(main_module, "_DOWNLOAD_SEM", _asyncio.Semaphore(1), create=True), \
+             patch("main._download", side_effect=capture):
+            resp = client.post(
+                "/api/download",
+                json={"url": playlist_url, "bitrate": 256},
+            )
+        assert resp.status_code in (400, 429)
+        assert called_urls == ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
+
+    def test_rejects_url_without_extractable_video_id(self):
+        resp = client.post(
+            "/api/download",
+            json={"url": "https://www.youtube.com/playlist?list=PLxxxxxxxx", "bitrate": 256},
+        )
+        assert resp.status_code == 400
+        assert "video ID" in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

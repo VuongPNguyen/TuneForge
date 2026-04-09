@@ -99,7 +99,18 @@ describe('DownloadForm submission', () => {
       'https://youtu.be/dQw4w9WgXcQ',
     );
     await user.click(screen.getByRole('button', { name: /convert to music/i }));
-    expect(onSubmit).toHaveBeenCalledWith('https://youtu.be/dQw4w9WgXcQ', 320);
+    expect(onSubmit).toHaveBeenCalledWith('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 320);
+  });
+
+  it('strips playlist and index query params to a canonical watch URL', async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = setup();
+    await user.type(
+      screen.getByPlaceholderText(/https:\/\/www\.youtube\.com/i),
+      'https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLxxx&index=2',
+    );
+    await user.click(screen.getByRole('button', { name: /convert to music/i }));
+    expect(onSubmit).toHaveBeenCalledWith('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 256);
   });
 
   it('does not call onSubmit with an invalid URL', async () => {

@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from contextlib import asynccontextmanager
-from urllib.parse import urlparse, quote as urlquote
+from urllib.parse import urlparse, parse_qs, quote as urlquote
 
 import aiosqlite
 import httpx
@@ -93,6 +93,9 @@ ALLOWED_THUMB_HOSTNAMES = {
 UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
+
+# YouTube video IDs are 11 characters (alphanumeric, underscore, hyphen).
+_YOUTUBE_VIDEO_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_API_URL = (
@@ -282,6 +285,39 @@ def _validate_youtube_url(url: str) -> bool:
         return False
 
 
+def _extract_youtube_video_id(url: str) -> Optional[str]:
+    """Return the video id if the URL points at a single YouTube video, else None."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return None
+    if parsed.scheme not in ("http", "https") or parsed.hostname not in ALLOWED_YT_HOSTNAMES:
+        return None
+    if parsed.hostname == "youtu.be":
+        segment = (parsed.path or "").strip("/").split("/")[0]
+        if segment and _YOUTUBE_VIDEO_ID_RE.fullmatch(segment):
+            return segment
+        return None
+    qs = parse_qs(parsed.query)
+    for v in qs.get("v") or []:
+        v = (v or "").strip()
+        if v and _YOUTUBE_VIDEO_ID_RE.fullmatch(v):
+            return v
+    parts = [p for p in (parsed.path or "").split("/") if p]
+    if len(parts) >= 2 and parts[0] in ("shorts", "embed", "v", "live"):
+        if _YOUTUBE_VIDEO_ID_RE.fullmatch(parts[1]):
+            return parts[1]
+    return None
+
+
+def _normalize_youtube_url(url: str) -> Optional[str]:
+    """Canonical watch URL with only the ``v`` query parameter."""
+    vid = _extract_youtube_video_id(url)
+    if not vid:
+        return None
+    return f"https://www.youtube.com/watch?v={vid}"
+
+
 def _validate_file_id(file_id: str) -> bool:
     """Return True only for well-formed v4 UUIDs."""
     return bool(UUID_RE.match(file_id))
@@ -448,6 +484,13 @@ async def download_video(request: Request, req: DownloadRequest):
     if not _validate_youtube_url(req.url):
         raise HTTPException(status_code=400, detail="URL must be a valid YouTube URL")
 
+    canonical_url = _normalize_youtube_url(req.url)
+    if not canonical_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not extract a video ID from this URL.",
+        )
+
     if req.bitrate not in VALID_BITRATES:
         raise HTTPException(
             status_code=400,
@@ -478,15 +521,15 @@ async def download_video(request: Request, req: DownloadRequest):
     try:
         loop = asyncio.get_running_loop()
         async with _DOWNLOAD_SEM:
-            info = await loop.run_in_executor(None, lambda: _download(req.url, ydl_opts))
+            info = await loop.run_in_executor(None, lambda: _download(canonical_url, ydl_opts))
     except yt_dlp.utils.DownloadError as e:
-        logger.error("yt-dlp download error for %s: %s", _safe_log_url(req.url), e)
+        logger.error("yt-dlp download error for %s: %s", _safe_log_url(canonical_url), e)
         raise HTTPException(
             status_code=400,
             detail="Download failed. Please check the URL and try again.",
         )
     except Exception:
-        logger.exception("Unexpected error during download for %s", _safe_log_url(req.url))
+        logger.exception("Unexpected error during download for %s", _safe_log_url(canonical_url))
         raise HTTPException(status_code=500, detail="An unexpected error occurred. Please try again.")
 
     if not output_path.exists():
@@ -520,7 +563,7 @@ async def download_video(request: Request, req: DownloadRequest):
         "genre": info.get("genre", ""),
         "thumbnail_b64": thumbnail_b64,
         "duration": info.get("duration"),
-        "webpage_url": info.get("webpage_url", req.url),
+        "webpage_url": info.get("webpage_url", canonical_url),
     }
 
     return metadata

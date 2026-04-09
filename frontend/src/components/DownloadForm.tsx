@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Music, Link, Zap } from 'lucide-react';
+import { normalizeYoutubeUrl } from '../utils/youtubeUrl';
 
 interface Props {
   onSubmit: (url: string, bitrate: number) => void;
@@ -38,12 +39,18 @@ export default function DownloadForm({ onSubmit, isLoading }: Props) {
       setUrlError('Please enter a YouTube URL');
       return;
     }
-    if (!validateUrl(url.trim())) {
+    const trimmed = url.trim();
+    if (!validateUrl(trimmed)) {
       setUrlError('Please enter a valid YouTube video URL');
       return;
     }
+    const canonical = normalizeYoutubeUrl(trimmed);
+    if (!canonical) {
+      setUrlError('Could not extract a video ID from this URL');
+      return;
+    }
     setUrlError('');
-    onSubmit(url.trim(), bitrate);
+    onSubmit(canonical, bitrate);
   }
 
   return (

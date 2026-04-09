@@ -14,7 +14,7 @@ const MOCK_METADATA = {
   genre: 'Test',
   thumbnail_b64: null,
   duration: 210,
-  webpage_url: 'https://www.youtube.com/watch?v=e2etest',
+  webpage_url: 'https://www.youtube.com/watch?v=e2etestxxxx',
 };
 
 // ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ test.describe('Full download flow', () => {
     await mockAllApis(page);
     await page.goto('/');
 
-    await page.fill('input[type="url"]', 'https://www.youtube.com/watch?v=e2etest');
+    await page.fill('input[type="url"]', 'https://www.youtube.com/watch?v=e2etestxxxx');
     await page.click('button[type="submit"]');
 
     // Should show the TagEditor
@@ -104,7 +104,7 @@ test.describe('Full download flow', () => {
   test('tag editor is pre-filled with metadata from the download response', async ({ page }) => {
     await mockAllApis(page);
     await page.goto('/');
-    await page.fill('input[type="url"]', 'https://www.youtube.com/watch?v=e2etest');
+    await page.fill('input[type="url"]', 'https://www.youtube.com/watch?v=e2etestxxxx');
     await page.click('button[type="submit"]');
     await page.waitForSelector('h2:has-text("Edit ID3 Tags")');
 
@@ -116,7 +116,7 @@ test.describe('Full download flow', () => {
   test('output filename preview reflects edits made in the tag editor', async ({ page }) => {
     await mockAllApis(page);
     await page.goto('/');
-    await page.fill('input[type="url"]', 'https://www.youtube.com/watch?v=e2etest');
+    await page.fill('input[type="url"]', 'https://www.youtube.com/watch?v=e2etestxxxx');
     await page.click('button[type="submit"]');
     await page.waitForSelector('h2:has-text("Edit ID3 Tags")');
 
@@ -128,7 +128,7 @@ test.describe('Full download flow', () => {
   test('"New download" button resets to the download form', async ({ page }) => {
     await mockAllApis(page);
     await page.goto('/');
-    await page.fill('input[type="url"]', 'https://www.youtube.com/watch?v=e2etest');
+    await page.fill('input[type="url"]', 'https://www.youtube.com/watch?v=e2etestxxxx');
     await page.click('button[type="submit"]');
     await page.waitForSelector('h2:has-text("Edit ID3 Tags")');
 
@@ -144,7 +144,7 @@ test.describe('TagEditor album art URL input', () => {
   test.beforeEach(async ({ page }) => {
     await mockAllApis(page);
     await page.goto('/');
-    await page.fill('input[type="url"]', 'https://www.youtube.com/watch?v=e2etest');
+    await page.fill('input[type="url"]', 'https://www.youtube.com/watch?v=e2etestxxxx');
     await page.click('button[type="submit"]');
     await page.waitForSelector('h2:has-text("Edit ID3 Tags")');
   });
@@ -184,7 +184,7 @@ test.describe('Error handling', () => {
     );
 
     await page.goto('/');
-    await page.fill('input[type="url"]', 'https://www.youtube.com/watch?v=test');
+    await page.fill('input[type="url"]', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
     await page.click('button[type="submit"]');
 
     await expect(page.getByText(/URL must be a valid YouTube URL/i)).toBeVisible({ timeout: 5000 });
@@ -196,7 +196,7 @@ test.describe('Error handling', () => {
     );
 
     await page.goto('/');
-    await page.fill('input[type="url"]', 'https://www.youtube.com/watch?v=test');
+    await page.fill('input[type="url"]', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
     await page.click('button[type="submit"]');
     await page.waitForSelector('text=Download failed');
 

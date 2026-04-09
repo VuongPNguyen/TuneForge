@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from main import (
     _validate_youtube_url,
+    _normalize_youtube_url,
     _validate_file_id,
     _safe_filename,
     _safe_log_url,
@@ -44,6 +45,32 @@ class TestValidateYouTubeUrl:
     ])
     def test_invalid_or_non_youtube_urls(self, url):
         assert _validate_youtube_url(url) is False
+
+
+# ---------------------------------------------------------------------------
+# _normalize_youtube_url
+# ---------------------------------------------------------------------------
+
+class TestNormalizeYouTubeUrl:
+    def test_strips_playlist_and_index_from_watch_url(self):
+        raw = (
+            "https://www.youtube.com/watch?v=kPa7bsKwL-c"
+            "&list=PLuxt6DrBFfRO8pp7PgjgZ7Tqt3pFB9_Kv&index=19"
+        )
+        assert _normalize_youtube_url(raw) == "https://www.youtube.com/watch?v=kPa7bsKwL-c"
+
+    def test_youtu_be_to_canonical_watch(self):
+        assert (
+            _normalize_youtube_url("https://youtu.be/dQw4w9WgXcQ?t=12")
+            == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        )
+
+    @pytest.mark.parametrize("url", [
+        "https://www.youtube.com/playlist?list=PLxxxxxxxx",
+        "https://www.youtube.com/watch?list=PLxxxxxxxx",
+    ])
+    def test_returns_none_without_video_id(self, url):
+        assert _normalize_youtube_url(url) is None
 
 
 # ---------------------------------------------------------------------------
