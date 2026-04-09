@@ -21,18 +21,18 @@ beforeEach(() => mockFetch.mockReset());
 describe('downloadVideo', () => {
   it('POSTs url and bitrate to /api/download', async () => {
     mockFetch.mockResolvedValueOnce(okResponse({ file_id: 'abc', title: 'Test' }));
-    await downloadVideo('https://youtube.com/watch?v=abc', 256);
+    await downloadVideo('https://youtube.com/watch?v=dQw4w9WgXcQ', 256);
     expect(mockFetch).toHaveBeenCalledWith('/api/download', expect.objectContaining({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: 'https://youtube.com/watch?v=abc', bitrate: 256 }),
+      body: JSON.stringify({ url: 'https://youtube.com/watch?v=dQw4w9WgXcQ', bitrate: 256 }),
     }));
   });
 
   it('returns parsed metadata on success', async () => {
     const meta = { file_id: 'abc', title: 'My Video', artist: 'Someone' };
     mockFetch.mockResolvedValueOnce(okResponse(meta));
-    const result = await downloadVideo('https://youtube.com/watch?v=abc', 128);
+    const result = await downloadVideo('https://youtube.com/watch?v=dQw4w9WgXcQ', 128);
     expect(result).toEqual(meta);
   });
 
@@ -43,7 +43,7 @@ describe('downloadVideo', () => {
 
   it('falls back to generic message when detail is missing', async () => {
     mockFetch.mockResolvedValueOnce(errResponse({}, 500));
-    await expect(downloadVideo('https://youtube.com/watch?v=abc', 256)).rejects.toThrow('Server error 500');
+    await expect(downloadVideo('https://youtube.com/watch?v=dQw4w9WgXcQ', 256)).rejects.toThrow('Server error 500');
   });
 });
 
