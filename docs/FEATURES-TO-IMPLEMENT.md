@@ -5,6 +5,35 @@
 - Fix save album
 - Multiple Artists should be separated by a slash "/"
 - Bad image link gives bad error.
+- Change thumbnail display to have entire image in frame.
+  - A rectangular image should have width fit the frame.
+- Have memory to remember previous "page" since last download.
+  - If in the music page, stay in music.
+  - If in default, stay in default.
+- Change artist mapping UI.
+  - The mapping fields of original name and display name should be visible without opening mappings tab.
+  - Change mapping tab to popup. similar to genres, rather than dropdown.
+    - Dropdown takes up too much space.
+  - If a mapping already exists, show it in the input fields.
+    - Changing the mapping there will update rather than add new.
+- Add sorting options to artist mapping
+  - Alphabetical, asc/desc
+  - Order by date added
+  - Sort using original or display name
+- Add sorting options to genre
+  - Alphabetical, asc/desc
+- Add search features for artist mapping and genre
+  - Search should look at both original and display
+- Add an additional tags button with popup.
+  - Needs a composer section.
+  - Should be a toggle to add a field to the main page.
+  - Should add fields in-between the main fields and file output.
+- Change the Covers, Singles, Album widget.
+  - Either can make a widget on the side in the margins or keep at top of screen
+  - Should follow the user as they move down the page.
+- Add trimming feature
+  - Should allow the user to trim from the beginning and end.
+  - Done via a start time and end time.
 
 Complete:
 - 04/08/2026
