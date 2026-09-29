@@ -5,17 +5,9 @@
 - Fix save album
 - Multiple Artists should be separated by a slash "/"
 - Bad image link gives bad error.
-- Change thumbnail display to have entire image in frame.
-  - A rectangular image should have width fit the frame.
 - Have memory to remember previous "page" since last download.
   - If in the music page, stay in music.
   - If in default, stay in default.
-- Change artist mapping UI.
-  - The mapping fields of original name and display name should be visible without opening mappings tab.
-  - Change mapping tab to popup. similar to genres, rather than dropdown.
-    - Dropdown takes up too much space.
-  - If a mapping already exists, show it in the input fields.
-    - Changing the mapping there will update rather than add new.
 - Add sorting options to artist mapping
   - Alphabetical, asc/desc
   - Order by date added
@@ -36,6 +28,16 @@
   - Done via a start time and end time.
 
 Complete:
+- 09/28/2026
+  - Change thumbnail display to have entire image in frame.
+    - A rectangular image should have width fit the frame.
+  - Change artist mapping UI.
+    - The mapping fields of original name and display name should be visible without opening mappings tab.
+    - Change mapping tab to popup. similar to genres, rather than dropdown.
+      - Dropdown takes up too much space.
+    - If a mapping already exists, show it in the input fields.
+      - Changing the mapping there will update rather than add new.
+
 - 04/08/2026
   - Streamline artist mapping.
     - Autofill the current mapping without the manual part.
