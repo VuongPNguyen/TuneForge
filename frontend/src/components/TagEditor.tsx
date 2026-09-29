@@ -124,7 +124,7 @@ export default function TagEditor({
       ? albumKey(metadata.album_artist, metadata.album)
       : null
   );
-  const [mappingsExpanded, setMappingsExpanded] = useState(false);
+  const [mappingsLibraryOpen, setMappingsLibraryOpen] = useState(false);
   const [albumsExpanded, setAlbumsExpanded] = useState(false);
   const [displayEdits, setDisplayEdits] = useState<Record<string, string>>({});
   const [newRaw, setNewRaw] = useState('');
@@ -140,15 +140,32 @@ export default function TagEditor({
   // True when a music mode is active that auto-computes certain fields
   const isSmartMode = activeTab === 'music' && (musicMode === 'covers' || musicMode === 'singles');
 
-  // When opening Artist Name Mappings, prefill the "Channel name (exact)" field
-  // with the original channel name so users don't need to copy/paste it manually.
+  const sortedMappings = useMemo(
+    () =>
+      [...mappings].sort((a, b) =>
+        a.raw.localeCompare(b.raw, undefined, { sensitivity: 'base' })
+      ),
+    [mappings]
+  );
+
+  // Prefill the "Channel name (exact)" field with the original channel name
+  // so users don't need to copy/paste it manually (e.g. after adding a mapping).
   useEffect(() => {
-    if (!mappingsExpanded) return;
+    if (activeTab !== 'music') return;
     if (newRaw.trim()) return;
     const originalArtist = (metadata.original_artist ?? tags.artist).trim();
     if (!originalArtist) return;
     setNewRaw(originalArtist);
-  }, [mappingsExpanded, newRaw, tags.artist, metadata.original_artist]);
+  }, [activeTab, newRaw, tags.artist, metadata.original_artist]);
+
+  // If the channel name already has a saved mapping, show its display name.
+  useEffect(() => {
+    const raw = newRaw.trim();
+    if (!raw) return;
+    const match = mappings.find((m) => m.raw === raw);
+    if (!match) return;
+    setNewDisplay(match.display);
+  }, [newRaw, mappings]);
 
   // Load albums on mount so live matching works before the Music tab is opened
   useEffect(() => {
@@ -185,7 +202,8 @@ export default function TagEditor({
         setAlbums(a);
       });
     }
-    setNewRaw('');
+    const originalArtist = (metadata.original_artist ?? metadata.artist ?? '').trim();
+    setNewRaw(originalArtist);
     setNewDisplay('');
     setAddMappingError(null);
     setDisplayEdits({});
@@ -723,13 +741,9 @@ export default function TagEditor({
             )}
           </div>
 
-          {/* Artist Mappings — collapsible */}
+          {/* Artist Mappings — inputs outside, library in popup */}
           <div className="rounded-xl bg-white/3 border border-white/8 overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setMappingsExpanded((v) => !v)}
-              className="w-full flex items-center gap-2.5 px-4 py-3 text-left hover:bg-white/3 transition-colors cursor-pointer"
-            >
+            <div className="flex items-center gap-2.5 px-4 py-3">
               <User className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
               <span className="text-sm font-medium text-slate-300 flex-1">Artist Name Mappings</span>
               {mappings.length > 0 && (
@@ -737,99 +751,66 @@ export default function TagEditor({
                   {mappings.length}
                 </span>
               )}
-              <ChevronDown
-                className={`w-3.5 h-3.5 text-slate-500 flex-shrink-0 transition-transform duration-200
-                  ${mappingsExpanded ? 'rotate-180' : ''}`}
-              />
-            </button>
+              <button
+                type="button"
+                onClick={() => setMappingsLibraryOpen(true)}
+                title="Manage saved mappings"
+                className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-slate-500
+                  hover:text-brand-300 hover:bg-brand-600/15 border border-transparent hover:border-brand-500/25
+                  transition-all cursor-pointer"
+                aria-label="Manage saved mappings"
+                aria-haspopup="dialog"
+                aria-expanded={mappingsLibraryOpen}
+              >
+                <List className="w-3.5 h-3.5" />
+              </button>
+            </div>
 
-            {mappingsExpanded && (
-              <div className="px-4 pb-4 space-y-3 border-t border-white/6">
-                <p className="text-xs text-slate-500 leading-relaxed pt-3">
-                  Automatically replaces a channel name with your preferred display name before the
-                  tag editor opens.
-                </p>
+            <div className="px-4 pb-4 space-y-3 border-t border-white/6">
+              <p className="text-xs text-slate-500 leading-relaxed pt-3">
+                Automatically replaces a channel name with your preferred display name before the
+                tag editor opens.
+              </p>
 
-                {mappings.length === 0 ? (
-                  <p className="text-sm text-slate-600">No mappings saved yet.</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {mappings.map((m) => (
-                      <div
-                        key={m.raw}
-                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/3 border border-white/6"
-                      >
-                        <span className="text-sm text-slate-400 min-w-0 truncate flex-1" title={m.raw}>
-                          {m.raw}
-                        </span>
-                        <ArrowRight className="w-3 h-3 text-slate-600 flex-shrink-0" />
-                        <input
-                          type="text"
-                          value={displayEdits[m.raw] ?? m.display}
-                          onChange={(e) =>
-                            setDisplayEdits((prev) => ({ ...prev, [m.raw]: e.target.value }))
-                          }
-                          onBlur={() => handleDisplayBlur(m.raw)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                          className="flex-1 min-w-0 bg-transparent text-sm text-white outline-none
-                            border-b border-transparent hover:border-white/20 focus:border-brand-500/60
-                            transition-colors px-0.5"
-                          aria-label={`Display name for ${m.raw}`}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteMapping(m.raw)}
-                          className="text-slate-600 hover:text-red-400 transition-colors cursor-pointer flex-shrink-0"
-                          aria-label={`Delete mapping for ${m.raw}`}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Add form */}
-                <div className="space-y-1.5 pt-1">
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Add mapping</p>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={newRaw}
-                      onChange={(e) => { setNewRaw(e.target.value); setAddMappingError(null); }}
-                      onKeyDown={(e) => { if (e.key === 'Enter') handleAddMapping(); }}
-                      placeholder="Channel name (exact)"
-                      className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10
-                        text-white text-sm placeholder-slate-600 outline-none
-                        focus:border-brand-500/60 focus:bg-white/8 transition-all"
-                    />
-                    <ArrowRight className="w-3 h-3 text-slate-600 flex-shrink-0" />
-                    <input
-                      type="text"
-                      value={newDisplay}
-                      onChange={(e) => { setNewDisplay(e.target.value); setAddMappingError(null); }}
-                      onKeyDown={(e) => { if (e.key === 'Enter') handleAddMapping(); }}
-                      placeholder="Display name"
-                      className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10
-                        text-white text-sm placeholder-slate-600 outline-none
-                        focus:border-brand-500/60 focus:bg-white/8 transition-all"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddMapping}
-                      disabled={!newRaw.trim() || !newDisplay.trim()}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-brand-600/20 border border-brand-500/30
-                        text-brand-300 hover:bg-brand-600/30 transition-all text-sm font-medium
-                        cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      Add
-                    </button>
-                  </div>
-                  {addMappingError && <p className="text-xs text-red-400">{addMappingError}</p>}
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Add mapping</p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={newRaw}
+                    onChange={(e) => { setNewRaw(e.target.value); setAddMappingError(null); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleAddMapping(); }}
+                    placeholder="Channel name (exact)"
+                    className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10
+                      text-white text-sm placeholder-slate-600 outline-none
+                      focus:border-brand-500/60 focus:bg-white/8 transition-all"
+                  />
+                  <ArrowRight className="w-3 h-3 text-slate-600 flex-shrink-0" />
+                  <input
+                    type="text"
+                    value={newDisplay}
+                    onChange={(e) => { setNewDisplay(e.target.value); setAddMappingError(null); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleAddMapping(); }}
+                    placeholder="Display name"
+                    className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10
+                      text-white text-sm placeholder-slate-600 outline-none
+                      focus:border-brand-500/60 focus:bg-white/8 transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddMapping}
+                    disabled={!newRaw.trim() || !newDisplay.trim()}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-brand-600/20 border border-brand-500/30
+                      text-brand-300 hover:bg-brand-600/30 transition-all text-sm font-medium
+                      cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add
+                  </button>
                 </div>
+                {addMappingError && <p className="text-xs text-red-400">{addMappingError}</p>}
               </div>
-            )}
+            </div>
           </div>
 
           {/* Saved Albums — collapsible */}
@@ -1247,6 +1228,77 @@ export default function TagEditor({
             )}
           </div>
         </div>
+
+        {mappingsLibraryOpen && (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mappings-library-title"
+            onClick={() => setMappingsLibraryOpen(false)}
+          >
+            <div
+              className="w-full max-w-md max-h-[min(80vh,520px)] flex flex-col rounded-2xl bg-slate-900 border border-white/10 shadow-xl shadow-black/40"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+                <h3 id="mappings-library-title" className="text-sm font-semibold text-white">
+                  Artist name mappings
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setMappingsLibraryOpen(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/8 transition-colors cursor-pointer"
+                  aria-label="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <p className="px-4 pt-3 text-xs text-slate-500 leading-relaxed">
+                Automatically replaces a channel name with your preferred display name before the
+                tag editor opens. Edit display names or remove entries you no longer need.
+              </p>
+              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5 min-h-0">
+                {sortedMappings.length === 0 ? (
+                  <p className="text-sm text-slate-600 py-2">No mappings saved yet.</p>
+                ) : (
+                  sortedMappings.map((m) => (
+                    <div
+                      key={m.raw}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/3 border border-white/6"
+                    >
+                      <span className="text-sm text-slate-400 min-w-0 truncate flex-1" title={m.raw}>
+                        {m.raw}
+                      </span>
+                      <ArrowRight className="w-3 h-3 text-slate-600 flex-shrink-0" />
+                      <input
+                        type="text"
+                        value={displayEdits[m.raw] ?? m.display}
+                        onChange={(e) =>
+                          setDisplayEdits((prev) => ({ ...prev, [m.raw]: e.target.value }))
+                        }
+                        onBlur={() => handleDisplayBlur(m.raw)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                        className="flex-1 min-w-0 bg-transparent text-sm text-white outline-none
+                          border-b border-transparent hover:border-white/20 focus:border-brand-500/60
+                          transition-colors px-0.5"
+                        aria-label={`Display name for ${m.raw}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMapping(m.raw)}
+                        className="text-slate-600 hover:text-red-400 transition-colors cursor-pointer flex-shrink-0"
+                        aria-label={`Delete mapping for ${m.raw}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {genreLibraryOpen && (
           <div
