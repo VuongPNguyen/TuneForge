@@ -187,7 +187,7 @@ export default function App() {
     <div className="min-h-screen flex flex-col">
       {/* Header */}
       <header className="border-b border-white/6 bg-white/2 backdrop-blur-sm">
-        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="max-w-[67rem] mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-brand-600/30 border border-brand-500/40 flex items-center justify-center">
               <span className="text-brand-400 text-xs font-bold">TF</span>
@@ -216,13 +216,13 @@ export default function App() {
       <main className="flex-1 flex items-center justify-center px-6 py-16">
         <div className="w-full">
           {adminConfigError && (
-            <div className="max-w-2xl mx-auto mb-0">
+            <div className="max-w-[63rem] mx-auto mb-0">
               <ErrorAlert message={adminConfigError} onDismiss={() => setAdminConfigError(null)} />
             </div>
           )}
 
           {error && (
-            <div className="max-w-2xl mx-auto mb-0">
+            <div className="max-w-[63rem] mx-auto mb-0">
               <ErrorAlert message={error} onDismiss={() => setError(null)} />
             </div>
           )}

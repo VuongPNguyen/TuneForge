@@ -10,8 +10,9 @@ vi.mock('../api', () => ({
 }));
 import { fetchImageFromUrl } from '../api';
 const mockFetchImageFromUrl = vi.mocked(fetchImageFromUrl);
-import { getGenreNames } from '../db';
+import { getGenreNames, getArtistMappings } from '../db';
 const mockGetGenreNames = vi.mocked(getGenreNames);
+const mockGetArtistMappings = vi.mocked(getArtistMappings);
 
 // Mock the db module so tests never touch IndexedDB (unavailable in JSDOM)
 vi.mock('../db', () => ({
@@ -95,14 +96,11 @@ describe('TagEditor rendering', () => {
     const user = userEvent.setup();
     setup();
 
-    // Switch to Music tab
+    // Switch to Music tab — add-mapping inputs are visible outside the library popup
     await user.click(screen.getByRole('button', { name: /music/i }));
 
-    // Expand Artist Name Mappings section
-    await user.click(screen.getByRole('button', { name: /artist name mappings/i }));
-
     // The "Channel name (exact)" input should be prefilled with the current artist
-    const channelInput = screen.getByPlaceholderText(/channel name \(exact\)/i) as HTMLInputElement;
+    const channelInput = await screen.findByPlaceholderText(/channel name \(exact\)/i) as HTMLInputElement;
     expect(channelInput.value).toBe('Test Artist');
   });
 
@@ -113,12 +111,27 @@ describe('TagEditor rendering', () => {
     // Switch to Music tab
     await user.click(screen.getByRole('button', { name: /music/i }));
 
-    // Expand Artist Name Mappings section
-    await user.click(screen.getByRole('button', { name: /artist name mappings/i }));
-
     // "Channel name (exact)" should use the preserved original channel name
-    const channelInput = screen.getByPlaceholderText(/channel name \(exact\)/i) as HTMLInputElement;
+    const channelInput = await screen.findByPlaceholderText(/channel name \(exact\)/i) as HTMLInputElement;
     expect(channelInput.value).toBe('Original Channel');
+  });
+
+  it('prefills display name when a mapping already exists for the channel', async () => {
+    const user = userEvent.setup();
+    mockGetArtistMappings.mockResolvedValueOnce([
+      { raw: 'Original Channel', display: 'Mapped Display' },
+    ]);
+    setup({ artist: 'Mapped Display', original_artist: 'Original Channel' });
+
+    await user.click(screen.getByRole('button', { name: /music/i }));
+
+    const channelInput = await screen.findByPlaceholderText(/channel name \(exact\)/i) as HTMLInputElement;
+    const displayInput = screen.getByPlaceholderText(/display name/i) as HTMLInputElement;
+
+    await waitFor(() => {
+      expect(channelInput.value).toBe('Original Channel');
+      expect(displayInput.value).toBe('Mapped Display');
+    });
   });
 
   it('updates current artist and album artist after adding mapping', async () => {
@@ -128,9 +141,7 @@ describe('TagEditor rendering', () => {
     // Switch to Music tab
     await user.click(screen.getByRole('button', { name: /music/i }));
 
-    // Expand Artist Name Mappings section
-    await user.click(screen.getByRole('button', { name: /artist name mappings/i }));
-
+    await screen.findByPlaceholderText(/channel name \(exact\)/i);
     const artistInput = screen.getByPlaceholderText('Artist name') as HTMLInputElement;
     const albumArtistInput = screen.getByPlaceholderText('Album artist name') as HTMLInputElement;
     expect(artistInput.value).toBe('Test Artist');
