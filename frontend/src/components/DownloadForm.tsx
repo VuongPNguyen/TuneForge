@@ -54,7 +54,7 @@ export default function DownloadForm({ onSubmit, isLoading }: Props) {
   }
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
+    <div className="w-full max-w-[63rem] mx-auto">
       {/* Hero */}
       <div className="text-center mb-12">
         <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-brand-600/20 border border-brand-500/30 mb-6 shadow-lg shadow-brand-500/10">

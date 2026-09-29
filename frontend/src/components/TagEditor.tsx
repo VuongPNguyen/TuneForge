@@ -653,7 +653,7 @@ export default function TagEditor({
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="w-full max-w-2xl mx-auto">
+    <div className="w-full max-w-[63rem] mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
