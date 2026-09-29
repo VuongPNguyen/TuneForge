@@ -23,11 +23,13 @@
 - Change the Covers, Singles, Album widget.
   - Either can make a widget on the side in the margins or keep at top of screen
   - Should follow the user as they move down the page.
-- Add trimming feature
-  - Should allow the user to trim from the beginning and end.
-  - Done via a start time and end time.
 
 Complete:
+- 09/29/2026
+  - Add trimming feature
+    - Dual-thumb range slider plus start/end mm:ss inputs in TagEditor.
+    - Trimming applied on save via ffmpeg (original temp file kept for re-trims).
+
 - 09/28/2026
   - Change thumbnail display to have entire image in frame.
     - A rectangular image should have width fit the frame.

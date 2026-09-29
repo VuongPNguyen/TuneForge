@@ -68,6 +68,16 @@ describe('saveWithTags', () => {
     expect(body.file_id).toBe('id-123');
     expect(body.filename).toBe('A - T');
     expect(body.tags).toEqual(tags);
+    expect(body.trim_start).toBeUndefined();
+    expect(body.trim_end).toBeUndefined();
+  });
+
+  it('includes trim_start and trim_end when a range is provided', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, blob: () => Promise.resolve(new Blob()) });
+    await saveWithTags('id-123', {} as never, 'A - T', { start: 4, end: 131 });
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.trim_start).toBe(4);
+    expect(body.trim_end).toBe(131);
   });
 
   it('throws with detail on 404', async () => {

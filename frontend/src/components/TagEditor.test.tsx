@@ -7,6 +7,7 @@ import type { DownloadMetadata } from '../types';
 // Mock the API module so tests never hit the network
 vi.mock('../api', () => ({
   fetchImageFromUrl: vi.fn(),
+  aiAutofill: vi.fn(),
 }));
 import { fetchImageFromUrl } from '../api';
 const mockFetchImageFromUrl = vi.mocked(fetchImageFromUrl);
@@ -339,6 +340,44 @@ describe('TagEditor form submission', () => {
     expect(tags.artist).toBe('Test Artist');
     expect(tags.year).toBe('2024');
     expect(tags.comment).toBe(BASE_METADATA.webpage_url);
+    // Full-length track — no trim payload
+    expect(onSave.mock.calls[0][1]).toBeNull();
+  });
+
+  it('passes trim start/end when the range is shortened', async () => {
+    const user = userEvent.setup();
+    const { onSave } = setup({ duration: 135 }); // 2:15
+
+    const endInput = screen.getByLabelText(/^end$/i);
+    await user.clear(endInput);
+    await user.type(endInput, '2:11');
+    fireEvent.blur(endInput);
+
+    await user.click(screen.getByRole('button', { name: /save & download/i }));
+
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onSave.mock.calls[0][1]).toEqual({ start: 0, end: 131 });
+  });
+
+  it('trims from the beginning when start is raised', async () => {
+    const user = userEvent.setup();
+    const { onSave } = setup({ duration: 135 });
+
+    const startInput = screen.getByLabelText(/^start$/i);
+    await user.clear(startInput);
+    await user.type(startInput, '0:04');
+    fireEvent.blur(startInput);
+
+    await user.click(screen.getByRole('button', { name: /save & download/i }));
+
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onSave.mock.calls[0][1]).toEqual({ start: 4, end: 135 });
+  });
+
+  it('shows default end time matching the track duration', () => {
+    setup({ duration: 135 });
+    expect(screen.getByLabelText(/^end$/i)).toHaveValue('2:15');
+    expect(screen.getByLabelText(/^start$/i)).toHaveValue('0:00');
   });
 
   it('does not submit when the outer form Enter key is pressed inside the URL input', async () => {

@@ -14,7 +14,7 @@ import {
 } from './api';
 import { lookupArtist, lookupAlbum, blobToBase64, rememberGenre } from './db';
 import { safeFilename } from './utils/filename';
-import type { AppStep, DownloadMetadata, ID3Tags } from './types';
+import type { AppStep, DownloadMetadata, ID3Tags, TrimRange } from './types';
 import type { ArtistMapping, AlbumRecord } from './db';
 
 const STORAGE_KEY = 'admin_token';
@@ -25,7 +25,12 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [albumAutofilled, setAlbumAutofilled] = useState(false);
-  const [savedFile, setSavedFile] = useState<{ blob: Blob; filename: string; tags: ID3Tags } | null>(null);
+  const [savedFile, setSavedFile] = useState<{
+    blob: Blob;
+    filename: string;
+    tags: ID3Tags;
+    trim: TrimRange | null;
+  } | null>(null);
 
   // ── Admin auth state ───────────────────────────────────────────────────────
   const [adminToken, setAdminToken] = useState<string | null>(() => localStorage.getItem(STORAGE_KEY));
@@ -141,10 +146,12 @@ export default function App() {
     }
   }
 
-  async function handleSave(tags: ID3Tags) {
+  async function handleSave(tags: ID3Tags, trim: TrimRange | null = null) {
     if (!metadata) return;
 
-    if (savedFile && JSON.stringify(savedFile.tags) === JSON.stringify(tags)) {
+    const sameTags = savedFile && JSON.stringify(savedFile.tags) === JSON.stringify(tags);
+    const sameTrim = savedFile && JSON.stringify(savedFile.trim) === JSON.stringify(trim);
+    if (savedFile && sameTags && sameTrim) {
       triggerDownload(savedFile.blob, savedFile.filename);
       if (tags.genre.trim()) {
         void rememberGenre(tags.genre);
@@ -159,9 +166,9 @@ export default function App() {
       const rawFilename =
         [tags.album_artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
       const filename = safeFilename(rawFilename);
-      const blob = await saveWithTags(metadata.file_id, tags, filename);
+      const blob = await saveWithTags(metadata.file_id, tags, filename, trim);
       const fullFilename = filename + '.mp3';
-      setSavedFile({ blob, filename: fullFilename, tags });
+      setSavedFile({ blob, filename: fullFilename, tags, trim });
       triggerDownload(blob, fullFilename);
       if (tags.genre.trim()) {
         void rememberGenre(tags.genre);

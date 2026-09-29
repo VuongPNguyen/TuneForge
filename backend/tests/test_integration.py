@@ -239,6 +239,60 @@ class TestSaveEndpoint:
         finally:
             (TEMP_DIR / f"{file_id}.mp3").unlink(missing_ok=True)
 
+    def test_rejects_invalid_trim_range(self):
+        file_id = str(uuid.uuid4())
+        _make_temp_mp3(file_id)
+        try:
+            resp = client.post("/api/save", json={
+                "file_id": file_id,
+                "tags": {},
+                "filename": "track",
+                "trim_start": 10,
+                "trim_end": 5,
+            })
+            assert resp.status_code == 400
+            assert "trim_end" in resp.json()["detail"].lower()
+        finally:
+            (TEMP_DIR / f"{file_id}.mp3").unlink(missing_ok=True)
+
+    def test_trims_audio_and_keeps_original(self):
+        import subprocess
+
+        file_id = str(uuid.uuid4())
+        src = TEMP_DIR / f"{file_id}.mp3"
+        # 10-second sine tone so ffmpeg has real audio to cut
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=10",
+                "-c:a", "libmp3lame", "-q:a", "9",
+                str(src),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        try:
+            resp = client.post("/api/save", json={
+                "file_id": file_id,
+                "tags": {"title": "Trimmed"},
+                "filename": "trimmed",
+                "trim_start": 2,
+                "trim_end": 6,
+            })
+            assert resp.status_code == 200
+            assert resp.headers["content-type"] == "audio/mpeg"
+            # Original must remain so the user can re-trim
+            assert src.exists()
+            trimmed = TEMP_DIR / f"{file_id}_trimmed.mp3"
+            assert trimmed.exists()
+            written = ID3(str(trimmed))
+            assert written.getall("TIT2")[0].text[0] == "Trimmed"
+            # Trimmed file should be shorter than the original
+            assert trimmed.stat().st_size < src.stat().st_size
+        finally:
+            src.unlink(missing_ok=True)
+            (TEMP_DIR / f"{file_id}_trimmed.mp3").unlink(missing_ok=True)
+
 
 # ---------------------------------------------------------------------------
 # /api/fetch-image

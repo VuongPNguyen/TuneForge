@@ -28,4 +28,10 @@ export interface ID3Tags {
   album_art_base64: string | null;
 }
 
+/** Inclusive start / exclusive-style end in seconds on the original track. */
+export interface TrimRange {
+  start: number;
+  end: number;
+}
+
 export type AppStep = 'input' | 'downloading' | 'tagging' | 'saving';

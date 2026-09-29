@@ -1,4 +1,4 @@
-import type { DownloadMetadata, ID3Tags } from './types';
+import type { DownloadMetadata, ID3Tags, TrimRange } from './types';
 import type { ArtistMapping, AlbumRecord } from './db';
 
 export async function downloadVideo(url: string, bitrate: number): Promise<DownloadMetadata> {
@@ -19,12 +19,19 @@ export async function downloadVideo(url: string, bitrate: number): Promise<Downl
 export async function saveWithTags(
   fileId: string,
   tags: ID3Tags,
-  filename: string
+  filename: string,
+  trim?: TrimRange | null
 ): Promise<Blob> {
+  const body: Record<string, unknown> = { file_id: fileId, tags, filename };
+  if (trim != null) {
+    body.trim_start = trim.start;
+    body.trim_end = trim.end;
+  }
+
   const res = await fetch('/api/save', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ file_id: fileId, tags, filename }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {

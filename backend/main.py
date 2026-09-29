@@ -9,6 +9,7 @@ import shutil
 import socket
 import ipaddress
 import hmac
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -257,6 +258,10 @@ class SaveRequest(BaseModel):
     file_id: str = Field(max_length=36)
     tags: ID3Tags
     filename: str = Field(default="download", max_length=255)
+    # Absolute timestamps in seconds within the original file.
+    # Omit both (or leave null) to keep the full track.
+    trim_start: Optional[float] = Field(None, ge=0)
+    trim_end: Optional[float] = Field(None, gt=0)
 
 
 class FetchImageRequest(BaseModel):
@@ -333,6 +338,81 @@ def _safe_filename(name: str) -> str:
 def _safe_log_url(url: str) -> str:
     """Strip control characters and truncate for safe log output."""
     return url.replace("\n", " ").replace("\r", " ").replace("\t", " ")[:200]
+
+
+def _resolve_trim_range(
+    trim_start: Optional[float],
+    trim_end: Optional[float],
+) -> Optional[tuple[float, float]]:
+    """Return (start, end) seconds if trimming is needed, else None.
+
+    Raises HTTPException for invalid ranges. A full-track request
+    (no end, and start missing or 0) returns None so ffmpeg is skipped.
+    """
+    if trim_start is None and trim_end is None:
+        return None
+
+    start = float(trim_start or 0)
+    if start < 0:
+        raise HTTPException(status_code=400, detail="trim_start must be >= 0")
+
+    if trim_end is None:
+        if start == 0:
+            return None
+        raise HTTPException(
+            status_code=400,
+            detail="trim_end is required when trim_start is greater than 0",
+        )
+
+    end = float(trim_end)
+    if end <= start:
+        raise HTTPException(
+            status_code=400,
+            detail="trim_end must be greater than trim_start",
+        )
+    if end - start < 0.1:
+        raise HTTPException(
+            status_code=400,
+            detail="Trimmed segment must be at least 0.1 seconds",
+        )
+    return (start, end)
+
+
+def _trim_mp3(src: Path, dst: Path, start: float, end: float) -> None:
+    """Cut [start, end) from src into dst via ffmpeg (re-encode for frame accuracy)."""
+    duration = end - start
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(src),
+        "-ss", f"{start:.3f}",
+        "-t", f"{duration:.3f}",
+        "-c:a", "libmp3lame",
+        "-q:a", "2",
+        str(dst),
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=500,
+            detail="ffmpeg is not installed on the server",
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="Audio trim timed out")
+
+    if result.returncode != 0 or not dst.exists() or dst.stat().st_size == 0:
+        logger.error(
+            "ffmpeg trim failed (code=%s): %s",
+            result.returncode,
+            (result.stderr or "")[-500:],
+        )
+        raise HTTPException(status_code=500, detail="Failed to trim audio")
 
 
 def _fetch_thumbnail(url: str) -> bytes:
@@ -580,9 +660,25 @@ async def save_with_tags(request: Request, req: SaveRequest):
     if not mp3_path.exists():
         raise HTTPException(status_code=404, detail="File not found or expired")
 
+    trim_range = _resolve_trim_range(req.trim_start, req.trim_end)
+    # Tag/serve a trimmed copy so the original temp file stays intact for re-saves.
+    work_path = mp3_path
+    trimmed_path: Optional[Path] = None
+    if trim_range is not None:
+        start, end = trim_range
+        trimmed_path = TEMP_DIR / f"{req.file_id}_trimmed.mp3"
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, _trim_mp3, mp3_path, trimmed_path, start, end)
+        except HTTPException:
+            if trimmed_path.exists():
+                trimmed_path.unlink(missing_ok=True)
+            raise
+        work_path = trimmed_path
+
     try:
         try:
-            tags = ID3(str(mp3_path))
+            tags = ID3(str(work_path))
         except ID3NoHeaderError:
             tags = ID3()
 
@@ -630,10 +726,14 @@ async def save_with_tags(request: Request, req: SaveRequest):
                 data=buf.getvalue(),
             ))
 
-        tags.save(str(mp3_path), v2_version=3)
+        tags.save(str(work_path), v2_version=3)
     except HTTPException:
+        if trimmed_path and trimmed_path.exists():
+            trimmed_path.unlink(missing_ok=True)
         raise
     except Exception:
+        if trimmed_path and trimmed_path.exists():
+            trimmed_path.unlink(missing_ok=True)
         logger.exception("Failed to write ID3 tags for file_id=%s", req.file_id)
         raise HTTPException(status_code=500, detail="Failed to write tags. Please try again.")
 
@@ -644,7 +744,7 @@ async def save_with_tags(request: Request, req: SaveRequest):
     )
 
     return FileResponse(
-        path=str(mp3_path),
+        path=str(work_path),
         media_type="audio/mpeg",
         headers={
             "Content-Disposition": (
