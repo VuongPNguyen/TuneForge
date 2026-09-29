@@ -980,7 +980,7 @@ export default function TagEditor({
         <div className="flex gap-5 p-5 rounded-2xl bg-white/3 border border-white/8">
           <div className="flex-shrink-0">
             <div
-              className={`w-28 h-28 rounded-xl bg-white/5 border flex items-center justify-center cursor-pointer
+              className={`w-28 h-28 bg-white/5 border flex items-center justify-center cursor-pointer
                 transition-all duration-150 group relative
                 ${isDragOver
                   ? 'border-brand-400 bg-brand-500/15 scale-105 shadow-lg shadow-brand-500/30'
@@ -992,18 +992,18 @@ export default function TagEditor({
               onDrop={handleDrop}
             >
               {isDragOver && (
-                <div className="absolute inset-[3px] rounded-lg border-2 border-dashed border-brand-400/70 pointer-events-none z-10" />
+                <div className="absolute inset-[3px] border-2 border-dashed border-brand-400/70 pointer-events-none z-10" />
               )}
               {isUrlFetching && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-slate-900/80 rounded-xl z-20">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-slate-900/80 z-20">
                   <Loader2 className="w-6 h-6 text-brand-400 animate-spin" />
                   <span className="text-[10px] font-semibold text-brand-300">Fetching...</span>
                 </div>
               )}
               {artPreview ? (
                 <>
-                  <img src={artPreview} alt="Album art" className="w-full h-full object-cover rounded-xl" />
-                  <div className={`absolute inset-0 transition-opacity flex flex-col items-center justify-center gap-1 rounded-xl
+                  <img src={artPreview} alt="Album art" className="max-w-full max-h-full w-auto h-auto object-contain" />
+                  <div className={`absolute inset-0 transition-opacity flex flex-col items-center justify-center gap-1
                     ${isDragOver ? 'opacity-100 bg-brand-900/80' : 'opacity-0 group-hover:opacity-100 bg-black/60'}`}>
                     {isDragOver ? (
                       <>
