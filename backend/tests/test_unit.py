@@ -14,8 +14,10 @@ from main import (
     _validate_file_id,
     _safe_filename,
     _safe_log_url,
+    _resolve_trim_range,
     _PRIVATE_NETWORKS,
 )
+from fastapi import HTTPException
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +156,33 @@ class TestSafeLogUrl:
     def test_short_url_unchanged(self):
         url = "https://example.com/img.jpg"
         assert _safe_log_url(url) == url
+
+
+# ---------------------------------------------------------------------------
+# _resolve_trim_range
+# ---------------------------------------------------------------------------
+
+class TestResolveTrimRange:
+    def test_none_means_no_trim(self):
+        assert _resolve_trim_range(None, None) is None
+
+    def test_zero_start_without_end_means_no_trim(self):
+        assert _resolve_trim_range(0, None) is None
+        assert _resolve_trim_range(None, None) is None
+
+    def test_valid_range(self):
+        assert _resolve_trim_range(4, 131) == (4.0, 131.0)
+        assert _resolve_trim_range(0, 131) == (0.0, 131.0)
+
+    def test_rejects_end_before_start(self):
+        with pytest.raises(HTTPException) as exc:
+            _resolve_trim_range(10, 5)
+        assert exc.value.status_code == 400
+
+    def test_rejects_start_without_end(self):
+        with pytest.raises(HTTPException) as exc:
+            _resolve_trim_range(3, None)
+        assert exc.value.status_code == 400
 
 
 # ---------------------------------------------------------------------------

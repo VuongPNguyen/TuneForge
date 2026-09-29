@@ -3,9 +3,9 @@ import {
   Music, User, Disc, Users, Calendar, Hash, Tag,
   Image as ImageIcon, Upload, X, Download, RotateCcw, Loader2,
   Link2, Wand2, BookmarkPlus, Check, AlertCircle,
-  ArrowRight, Plus, Trash2, ChevronDown, Sparkles, List,
+  ArrowRight, Plus, Trash2, ChevronDown, Sparkles, List, Scissors,
 } from 'lucide-react';
-import type { DownloadMetadata, ID3Tags } from '../types';
+import type { DownloadMetadata, ID3Tags, TrimRange } from '../types';
 import { fetchImageFromUrl, aiAutofill } from '../api';
 import {
   putAdminMapping, deleteAdminMapping, putAdminAlbum, deleteAdminAlbum,
@@ -21,7 +21,7 @@ import { safeFilename as sanitizeFilename } from '../utils/filename';
 
 interface Props {
   metadata: DownloadMetadata;
-  onSave: (tags: ID3Tags) => void | Promise<void>;
+  onSave: (tags: ID3Tags, trim: TrimRange | null) => void | Promise<void>;
   isSaving: boolean;
   onReset: () => void;
   albumAutofilled?: boolean;
@@ -64,11 +64,41 @@ const MODE_DESCRIPTIONS: Record<MusicMode, string> = {
   albums: 'Bookmark genre, year and art so they autofill on future downloads',
 };
 
-function formatDuration(seconds: number | null): string {
-  if (!seconds) return '';
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
+const MIN_TRIM_SECONDS = 1;
+
+function formatDuration(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '';
+  const total = Math.round(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/** Parse `m:ss`, `mm:ss`, or plain seconds into a non-negative number. */
+function parseDuration(text: string): number | null {
+  const t = text.trim();
+  if (!t) return null;
+  if (/^\d+(\.\d+)?$/.test(t)) {
+    const n = Number(t);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+  const match = t.match(/^(\d+):([0-5]?\d)$/);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function clampTrimRange(start: number, end: number, duration: number): { start: number; end: number } {
+  const max = Math.max(duration, MIN_TRIM_SECONDS);
+  let s = Math.min(Math.max(0, start), max - MIN_TRIM_SECONDS);
+  let e = Math.min(Math.max(s + MIN_TRIM_SECONDS, end), max);
+  if (e - s < MIN_TRIM_SECONDS) {
+    if (s + MIN_TRIM_SECONDS <= max) e = s + MIN_TRIM_SECONDS;
+    else {
+      e = max;
+      s = Math.max(0, e - MIN_TRIM_SECONDS);
+    }
+  }
+  return { start: s, end: e };
 }
 
 export default function TagEditor({
@@ -99,6 +129,14 @@ export default function TagEditor({
   const [isUrlFetching, setIsUrlFetching] = useState(false);
   const [artUrl, setArtUrl] = useState('');
   const [artUrlError, setArtUrlError] = useState<string | null>(null);
+
+  // ── Trim state (absolute start/end on the original track) ─────────────────
+  const trackDuration =
+    metadata.duration && metadata.duration > 0 ? Math.round(metadata.duration) : null;
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(trackDuration ?? 0);
+  const [startInput, setStartInput] = useState(() => formatDuration(0));
+  const [endInput, setEndInput] = useState(() => formatDuration(trackDuration ?? 0));
 
   // ── Tab / mode state ───────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<ActiveTab>('default');
@@ -600,8 +638,44 @@ export default function TagEditor({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    await Promise.resolve(onSave(tags));
+    let trim: TrimRange | null = null;
+    if (trackDuration != null) {
+      const { start, end } = clampTrimRange(trimStart, trimEnd, trackDuration);
+      if (start > 0 || end < trackDuration) {
+        trim = { start, end };
+      }
+    }
+    await Promise.resolve(onSave(tags, trim));
     await refreshSavedGenres();
+  }
+
+  function applyTrimRange(nextStart: number, nextEnd: number) {
+    if (trackDuration == null) return;
+    const { start, end } = clampTrimRange(nextStart, nextEnd, trackDuration);
+    setTrimStart(start);
+    setTrimEnd(end);
+    setStartInput(formatDuration(start));
+    setEndInput(formatDuration(end));
+  }
+
+  function commitStartInput() {
+    if (trackDuration == null) return;
+    const parsed = parseDuration(startInput);
+    if (parsed == null) {
+      setStartInput(formatDuration(trimStart));
+      return;
+    }
+    applyTrimRange(parsed, trimEnd);
+  }
+
+  function commitEndInput() {
+    if (trackDuration == null) return;
+    const parsed = parseDuration(endInput);
+    if (parsed == null) {
+      setEndInput(formatDuration(trimEnd));
+      return;
+    }
+    applyTrimRange(trimStart, parsed);
   }
 
   async function handleAiAutofill() {
@@ -957,8 +1031,9 @@ export default function TagEditor({
 
       {/* ── Tag form ─────────────────────────────────────────────────────────── */}
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Album Art */}
-        <div className="flex gap-5 p-5 rounded-2xl bg-white/3 border border-white/8">
+        {/* Album Art + Trim */}
+        <div className="p-5 rounded-2xl bg-white/3 border border-white/8 space-y-4">
+        <div className="flex gap-5">
           <div className="flex-shrink-0">
             <div
               className={`w-28 h-28 bg-white/5 border flex items-center justify-center cursor-pointer
@@ -1076,6 +1151,110 @@ export default function TagEditor({
               <p className="text-sm font-mono text-slate-300 mt-0.5">{formatDuration(metadata.duration)}</p>
             </div>
           )}
+        </div>
+
+        {trackDuration != null && (
+          <div className="space-y-3 pt-1 border-t border-white/8">
+            <div className="flex items-center justify-between gap-3">
+              <p className="flex items-center gap-2 text-xs font-medium text-slate-400 uppercase tracking-wide">
+                <Scissors className="w-3.5 h-3.5 text-slate-500" />
+                Trim
+              </p>
+              <p className="text-xs text-slate-500 font-mono">
+                {trimStart > 0 || trimEnd < trackDuration
+                  ? `${formatDuration(trimEnd - trimStart)} kept of ${formatDuration(trackDuration)}`
+                  : `Full length · ${formatDuration(trackDuration)}`}
+              </p>
+            </div>
+
+            <div className="trim-range">
+              <div
+                className="trim-range-track"
+                style={{
+                  ['--trim-start' as string]: `${(trimStart / trackDuration) * 100}%`,
+                  ['--trim-end' as string]: `${(trimEnd / trackDuration) * 100}%`,
+                }}
+              />
+              <input
+                type="range"
+                min={0}
+                max={trackDuration}
+                step={1}
+                value={trimStart}
+                disabled={isSaving}
+                aria-label="Trim start"
+                className="trim-range-thumb"
+                onChange={(e) => applyTrimRange(Number(e.target.value), trimEnd)}
+              />
+              <input
+                type="range"
+                min={0}
+                max={trackDuration}
+                step={1}
+                value={trimEnd}
+                disabled={isSaving}
+                aria-label="Trim end"
+                className="trim-range-thumb"
+                onChange={(e) => applyTrimRange(trimStart, Number(e.target.value))}
+              />
+            </div>
+
+            <div className="flex items-end justify-between gap-3">
+              <div className="w-[4.75rem]">
+                <label htmlFor="trim-start" className="block text-[11px] text-slate-500 mb-1">
+                  Start
+                </label>
+                <input
+                  id="trim-start"
+                  type="text"
+                  inputMode="numeric"
+                  value={startInput}
+                  disabled={isSaving}
+                  placeholder="0:00"
+                  onChange={(e) => setStartInput(e.target.value)}
+                  onBlur={commitStartInput}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      commitStartInput();
+                      (e.target as HTMLInputElement).blur();
+                    }
+                  }}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10
+                    text-white text-sm font-mono text-center placeholder-slate-600 outline-none
+                    focus:border-brand-500/60 focus:bg-white/8 transition-all
+                    disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+              </div>
+              <div className="w-[4.75rem]">
+                <label htmlFor="trim-end" className="block text-[11px] text-slate-500 mb-1 text-right">
+                  End
+                </label>
+                <input
+                  id="trim-end"
+                  type="text"
+                  inputMode="numeric"
+                  value={endInput}
+                  disabled={isSaving}
+                  placeholder={formatDuration(trackDuration)}
+                  onChange={(e) => setEndInput(e.target.value)}
+                  onBlur={commitEndInput}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      commitEndInput();
+                      (e.target as HTMLInputElement).blur();
+                    }
+                  }}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10
+                    text-white text-sm font-mono text-center placeholder-slate-600 outline-none
+                    focus:border-brand-500/60 focus:bg-white/8 transition-all
+                    disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+              </div>
+            </div>
+          </div>
+        )}
         </div>
 
         <input
