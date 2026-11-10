@@ -209,6 +209,68 @@ class TestSaveEndpoint:
         finally:
             (TEMP_DIR / f"{file_id}.mp3").unlink(missing_ok=True)
 
+    def test_saves_additional_tags(self):
+        file_id = str(uuid.uuid4())
+        _make_temp_mp3(file_id)
+        try:
+            resp = client.post("/api/save", json={
+                "file_id": file_id,
+                "tags": {
+                    "title": "Test Song",
+                    "composer": "Some Composer",
+                    "disc_number": "1/2",
+                    "compilation": True,
+                    "bpm": "128",
+                    "lyrics": "la la la",
+                    "publisher": "",
+                },
+                "filename": "track",
+            })
+            assert resp.status_code == 200
+            written = ID3(str(TEMP_DIR / f"{file_id}.mp3"))
+            assert written.getall("TCOM")[0].text[0] == "Some Composer"
+            assert written.getall("TPOS")[0].text[0] == "1/2"
+            assert written.getall("TCMP")[0].text[0] == "1"
+            assert written.getall("TBPM")[0].text[0] == "128"
+            assert written.getall("USLT")[0].text == "la la la"
+            assert written.getall("TPUB") == []
+        finally:
+            (TEMP_DIR / f"{file_id}.mp3").unlink(missing_ok=True)
+
+    def test_resave_clears_removed_additional_tags(self):
+        file_id = str(uuid.uuid4())
+        _make_temp_mp3(file_id)
+        try:
+            client.post("/api/save", json={
+                "file_id": file_id,
+                "tags": {"composer": "Someone", "compilation": True},
+                "filename": "track",
+            })
+            resp = client.post("/api/save", json={
+                "file_id": file_id,
+                "tags": {"composer": "", "compilation": False},
+                "filename": "track",
+            })
+            assert resp.status_code == 200
+            written = ID3(str(TEMP_DIR / f"{file_id}.mp3"))
+            assert written.getall("TCOM") == []
+            assert written.getall("TCMP") == []
+        finally:
+            (TEMP_DIR / f"{file_id}.mp3").unlink(missing_ok=True)
+
+    def test_rejects_non_numeric_bpm(self):
+        file_id = str(uuid.uuid4())
+        _make_temp_mp3(file_id)
+        try:
+            resp = client.post("/api/save", json={
+                "file_id": file_id,
+                "tags": {"bpm": "fast"},
+                "filename": "track",
+            })
+            assert resp.status_code == 422
+        finally:
+            (TEMP_DIR / f"{file_id}.mp3").unlink(missing_ok=True)
+
     def test_saves_album_art_as_jpeg(self):
         file_id = str(uuid.uuid4())
         _make_temp_mp3(file_id)
@@ -398,3 +460,43 @@ class TestFetchImageEndpoint:
             resp = client.post("/api/fetch-image", json={"url": "https://example.com/img.png"})
 
         assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# /api/admin/tag-layout
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def admin_client(tmp_path, monkeypatch):
+    """TestClient with the lifespan running against a throwaway SQLite file."""
+    import main as main_module
+
+    monkeypatch.setattr(main_module, "SQLITE_PATH", tmp_path / "config.db")
+    monkeypatch.setattr(main_module, "JWT_SECRET", "test-secret")
+    with TestClient(app) as c:
+        c.headers.update({"Authorization": f"Bearer {main_module._create_token()}"})
+        yield c
+
+
+class TestTagLayoutEndpoint:
+    def test_requires_auth(self):
+        assert client.get("/api/admin/tag-layout").status_code == 401
+        assert client.put(
+            "/api/admin/tag-layout", json={"order": [], "enabled": []}
+        ).status_code == 401
+
+    def test_returns_null_when_unset(self, admin_client):
+        resp = admin_client.get("/api/admin/tag-layout")
+        assert resp.status_code == 200
+        assert resp.json() == {"layout": None}
+
+    def test_round_trips_layout(self, admin_client):
+        layout = {"order": ["artist", "title", "composer"], "enabled": ["composer"]}
+        assert admin_client.put("/api/admin/tag-layout", json=layout).status_code == 200
+        assert admin_client.get("/api/admin/tag-layout").json() == {"layout": layout}
+
+    def test_rejects_malformed_keys(self, admin_client):
+        resp = admin_client.put(
+            "/api/admin/tag-layout", json={"order": ["DROP TABLE"], "enabled": []}
+        )
+        assert resp.status_code == 422

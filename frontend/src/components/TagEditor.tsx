@@ -1,11 +1,18 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  Music, User, Disc, Users, Calendar, Hash, Tag,
+  User, Disc,
   Image as ImageIcon, Upload, X, Download, RotateCcw, Loader2,
   Link2, Wand2, BookmarkPlus, Check, AlertCircle,
-  ArrowRight, Plus, Trash2, ChevronDown, Sparkles, List, Scissors,
+  ArrowRight, Plus, Trash2, ChevronDown, ChevronUp, Sparkles, List, Scissors,
+  SlidersHorizontal, GripVertical,
 } from 'lucide-react';
 import type { DownloadMetadata, ID3Tags, TrimRange } from '../types';
+import {
+  DEFAULT_TAG_LAYOUT, EMPTY_EXTRA_TAGS, TAG_FIELDS_BY_KEY,
+  isDefaultTagKey, isExtraTagKey, moveTagField, toggleTagField,
+  stripHiddenExtraTags, visibleTagFields,
+  type TagFieldDef, type TagFieldKey, type TagFieldLayout,
+} from '../tagFields';
 import { fetchImageFromUrl, aiAutofill } from '../api';
 import {
   putAdminMapping, deleteAdminMapping, putAdminAlbum, deleteAdminAlbum,
@@ -32,28 +39,26 @@ interface Props {
   onMappingsChange?: (mappings: ArtistMapping[]) => void;
   onAlbumsChange?: (albums: AlbumRecord[]) => void;
   aiAvailable?: boolean;
+  fieldLayout?: TagFieldLayout;
+  onFieldLayoutChange?: (layout: TagFieldLayout) => void;
 }
 
-interface FieldConfig {
-  key: keyof Omit<ID3Tags, 'album_art_base64' | 'comment'>;
-  label: string;
-  placeholder: string;
-  icon: React.ReactNode;
-  type?: string;
-  maxLength?: number;
+type TextTagKey = Exclude<TagFieldKey, 'compilation'>;
+
+function ToggleSwitch({ on }: { on: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={`relative inline-flex w-9 h-5 flex-shrink-0 rounded-full border transition-colors
+        ${on ? 'bg-brand-600/60 border-brand-500/60' : 'bg-white/8 border-white/15'}`}
+    >
+      <span
+        className={`absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full transition-transform
+          ${on ? 'translate-x-4 bg-white' : 'translate-x-0 bg-slate-400'}`}
+      />
+    </span>
+  );
 }
-
-const FIELDS: FieldConfig[] = [
-  { key: 'title', label: 'Title', placeholder: 'Track title', icon: <Music className="w-4 h-4" /> },
-  { key: 'artist', label: 'Artist', placeholder: 'Artist name', icon: <User className="w-4 h-4" /> },
-  { key: 'album', label: 'Album', placeholder: 'Album name', icon: <Disc className="w-4 h-4" /> },
-  { key: 'album_artist', label: 'Album Artist', placeholder: 'Album artist name', icon: <Users className="w-4 h-4" /> },
-  { key: 'year', label: 'Year', placeholder: 'e.g. 2024', icon: <Calendar className="w-4 h-4" />, type: 'text', maxLength: 4 },
-  { key: 'track_number', label: 'Track Number', placeholder: 'e.g. 1 or 1/12', icon: <Hash className="w-4 h-4" /> },
-  { key: 'genre', label: 'Genre', placeholder: 'e.g. Electronic', icon: <Tag className="w-4 h-4" /> },
-];
-
-const NON_GENRE_FIELDS = FIELDS.filter((f) => f.key !== 'genre');
 
 type MusicMode = 'covers' | 'singles' | 'albums';
 type ActiveTab = 'default' | 'music';
@@ -106,7 +111,23 @@ export default function TagEditor({
   isAdmin, adminToken, initialMappings, initialAlbums,
   onMappingsChange, onAlbumsChange,
   aiAvailable = true,
+  fieldLayout, onFieldLayoutChange,
 }: Props) {
+  // ── Tag field layout (which fields show, and in what order) ────────────────
+  const [localFieldLayout, setLocalFieldLayout] = useState<TagFieldLayout>(
+    fieldLayout ?? DEFAULT_TAG_LAYOUT
+  );
+  const layout = fieldLayout ?? localFieldLayout;
+  const visibleFields = useMemo(() => visibleTagFields(layout), [layout]);
+  const [fieldsPopupOpen, setFieldsPopupOpen] = useState(false);
+  const [dragFieldKey, setDragFieldKey] = useState<TagFieldKey | null>(null);
+  const [dragOverFieldKey, setDragOverFieldKey] = useState<TagFieldKey | null>(null);
+
+  function updateLayout(next: TagFieldLayout) {
+    setLocalFieldLayout(next);
+    onFieldLayoutChange?.(next);
+  }
+
   // ── Tag state ──────────────────────────────────────────────────────────────
   const [tags, setTags] = useState<ID3Tags>({
     title: metadata.title || '',
@@ -118,6 +139,7 @@ export default function TagEditor({
     genre: metadata.genre || '',
     comment: metadata.webpage_url || '',
     album_art_base64: metadata.thumbnail_b64 || null,
+    ...EMPTY_EXTRA_TAGS,
   });
 
   const [artPreview, setArtPreview] = useState<string | null>(
@@ -289,7 +311,7 @@ export default function TagEditor({
   }, [albums]);
 
   // ── Tag field handlers ─────────────────────────────────────────────────────
-  function handleField(key: keyof Omit<ID3Tags, 'album_art_base64' | 'comment'>, value: string) {
+  function handleField(key: TextTagKey, value: string) {
     if (activeTab === 'music' && musicMode) {
       setTags((prev) => {
         const next = { ...prev, [key]: value };
@@ -645,7 +667,7 @@ export default function TagEditor({
         trim = { start, end };
       }
     }
-    await Promise.resolve(onSave(tags, trim));
+    await Promise.resolve(onSave(stripHiddenExtraTags(tags, layout), trim));
     await refreshSavedGenres();
   }
 
@@ -742,6 +764,182 @@ export default function TagEditor({
   const rawFilename =
     [tags.album_artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
   const safeFilename = sanitizeFilename(rawFilename);
+
+  // ── Field layout popup handlers ────────────────────────────────────────────
+  function handleFieldDrop(targetKey: TagFieldKey) {
+    if (dragFieldKey && dragFieldKey !== targetKey) {
+      updateLayout(moveTagField(layout, dragFieldKey, layout.order.indexOf(targetKey)));
+    }
+    setDragFieldKey(null);
+    setDragOverFieldKey(null);
+  }
+
+  function renderFieldLabel(field: TagFieldDef, htmlFor?: string, extra?: React.ReactNode) {
+    const Icon = field.icon;
+    return (
+      <label
+        htmlFor={htmlFor}
+        className="flex items-center gap-2 text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide"
+      >
+        <span className="text-slate-500"><Icon className="w-4 h-4" /></span>
+        {field.label}
+        {extra}
+      </label>
+    );
+  }
+
+  function renderTagField(field: TagFieldDef) {
+    const wrapperClass = field.wide ? 'sm:col-span-2' : '';
+    const inputId = `tag-${field.key}`;
+
+    if (field.key === 'genre') {
+      return (
+        <div key={field.key} className={wrapperClass}>
+          {renderFieldLabel(field, inputId)}
+          <div
+            className={`group/genre relative w-full rounded-xl border text-sm outline-none transition-all
+              bg-white/5 border-white/10 focus-within:border-brand-500/60 focus-within:bg-white/8
+              ${isSaving ? 'opacity-50' : ''}`}
+          >
+            <div className="relative px-4 py-3 pr-11">
+              {genreCompletion.suffix !== '' && (
+                <span
+                  className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 flex text-sm whitespace-pre"
+                  aria-hidden
+                >
+                  <span className="invisible">{tags.genre}</span>
+                  <span className="text-brand-400 font-semibold tracking-tight drop-shadow-[0_0_10px_rgba(52,211,153,0.45)]">
+                    {genreCompletion.suffix}
+                  </span>
+                </span>
+              )}
+              <input
+                ref={genreInputRef}
+                type="text"
+                id={inputId}
+                value={tags.genre}
+                onChange={(e) => handleField('genre', e.target.value)}
+                onKeyDown={handleGenreKeyDown}
+                placeholder={field.placeholder}
+                maxLength={field.maxLength}
+                disabled={isSaving}
+                aria-autocomplete="inline"
+                aria-controls={genreCompletion.suffix ? 'genre-completion-hint' : undefined}
+                className="relative z-10 w-full bg-transparent text-sm text-white placeholder-slate-600 outline-none
+                  disabled:cursor-not-allowed"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setGenreLibraryOpen(true)}
+              disabled={isSaving}
+              title="Manage saved genres"
+              className="absolute right-2 top-1/2 -translate-y-1/2 z-20 inline-flex items-center justify-center
+                w-8 h-8 rounded-lg text-slate-500 hover:text-brand-300 hover:bg-brand-600/15
+                border border-transparent hover:border-brand-500/25 transition-all cursor-pointer
+                disabled:opacity-40 disabled:cursor-not-allowed"
+              aria-label="Manage saved genres"
+            >
+              <List className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {genreCompletion.suffix !== '' && (
+            <p id="genre-completion-hint" className="mt-1.5 text-[11px] text-brand-400/90 font-medium">
+              Preview: {genreCompletion.full}
+              <span className="text-slate-500 font-normal"> · Tab or → to apply</span>
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    if (field.key === 'compilation') {
+      return (
+        <div key={field.key} className={wrapperClass}>
+          {renderFieldLabel(field)}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={tags.compilation}
+            aria-label="Part of a compilation"
+            onClick={() => setTags((prev) => ({ ...prev, compilation: !prev.compilation }))}
+            disabled={isSaving}
+            className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl border text-sm transition-all
+              bg-white/5 border-white/10 hover:bg-white/8 cursor-pointer
+              disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span className={tags.compilation ? 'text-white' : 'text-slate-500'}>
+              {tags.compilation ? 'Part of a compilation' : 'Not a compilation'}
+            </span>
+            <ToggleSwitch on={tags.compilation} />
+          </button>
+        </div>
+      );
+    }
+
+    const key = field.key as TextTagKey;
+    const inputClass = `w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all
+      bg-white/5 border-white/10 text-white placeholder-slate-600 focus:border-brand-500/60 focus:bg-white/8
+      disabled:opacity-50 disabled:cursor-not-allowed`;
+
+    if (field.kind === 'textarea') {
+      return (
+        <div key={field.key} className={wrapperClass}>
+          {renderFieldLabel(field, inputId)}
+          <textarea
+            id={inputId}
+            value={tags[key]}
+            onChange={(e) => handleField(key, e.target.value)}
+            placeholder={field.placeholder}
+            maxLength={field.maxLength}
+            disabled={isSaving}
+            rows={5}
+            className={`${inputClass} resize-y`}
+          />
+        </div>
+      );
+    }
+
+    const smartChildHint =
+      isSmartMode && key === 'artist'
+        ? 'Syncs when Album Artist changes — editable'
+        : isSmartMode && key === 'album' && musicMode === 'covers'
+          ? 'Syncs when Album Artist changes — editable'
+          : isSmartMode && key === 'album' && musicMode === 'singles'
+            ? 'Syncs when Title changes — editable'
+            : null;
+
+    return (
+      <div key={field.key} className={wrapperClass}>
+        {renderFieldLabel(field, inputId, smartChildHint && (
+          <span
+            title={smartChildHint}
+            className="ml-auto flex items-center gap-1 text-slate-600 normal-case font-normal tracking-normal max-w-[min(100%,11rem)]"
+          >
+            <Link2 className="w-3 h-3 flex-shrink-0" />
+            <span className="text-[10px] leading-tight line-clamp-2">
+              {key === 'artist'
+                ? 'linked to Album Artist'
+                : musicMode === 'covers'
+                  ? 'linked to Album Artist'
+                  : 'linked to Title'}
+            </span>
+          </span>
+        ))}
+        <input
+          id={inputId}
+          type="text"
+          inputMode={key === 'bpm' ? 'numeric' : undefined}
+          value={tags[key]}
+          onChange={(e) => handleField(key, e.target.value)}
+          placeholder={field.placeholder}
+          maxLength={field.maxLength}
+          disabled={isSaving}
+          className={inputClass}
+        />
+      </div>
+    );
+  }
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -999,7 +1197,7 @@ export default function TagEditor({
           <span className="text-sm text-violet-300 flex-1">
             AI filled:{' '}
             {aiFilledFields
-              .map((k) => k === 'album_art' ? 'Album Art' : (FIELDS.find((f) => f.key === k)?.label ?? k))
+              .map((k) => k === 'album_art' ? 'Album Art' : (TAG_FIELDS_BY_KEY[k as TagFieldKey]?.label ?? k))
               .join(', ')}
           </span>
           <button
@@ -1267,7 +1465,27 @@ export default function TagEditor({
 
         {/* Tag fields header with AI Autofill */}
         <div className="flex items-center justify-between">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Tag fields</p>
+          <div className="flex items-center gap-3">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Tag fields</p>
+            <button
+              type="button"
+              onClick={() => setFieldsPopupOpen(true)}
+              disabled={isSaving}
+              aria-haspopup="dialog"
+              aria-expanded={fieldsPopupOpen}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10
+                text-slate-300 hover:bg-white/10 hover:border-white/20 transition-all text-xs font-medium
+                cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <SlidersHorizontal className="w-3 h-3" />
+              Additional tags
+              {layout.enabled.length > 0 && (
+                <span className="text-[10px] font-semibold bg-brand-600/25 text-brand-400 px-1.5 py-0.5 rounded-full">
+                  {layout.enabled.length}
+                </span>
+              )}
+            </button>
+          </div>
           <div className="flex flex-col items-end gap-1">
             <button
               type="button"
@@ -1295,118 +1513,132 @@ export default function TagEditor({
 
         {/* Tag fields */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {NON_GENRE_FIELDS.map((field) => {
-            const smartChildHint =
-              isSmartMode && field.key === 'artist'
-                ? 'Syncs when Album Artist changes — editable'
-                : isSmartMode && field.key === 'album' && musicMode === 'covers'
-                  ? 'Syncs when Album Artist changes — editable'
-                  : isSmartMode && field.key === 'album' && musicMode === 'singles'
-                    ? 'Syncs when Title changes — editable'
-                    : null;
-
-            return (
-              <div key={field.key} className={field.key === 'title' ? 'sm:col-span-2' : ''}>
-                <label className="flex items-center gap-2 text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">
-                  <span className="text-slate-500">{field.icon}</span>
-                  {field.label}
-                  {smartChildHint && (
-                    <span
-                      title={smartChildHint}
-                      className="ml-auto flex items-center gap-1 text-slate-600 normal-case font-normal tracking-normal max-w-[min(100%,11rem)]"
-                    >
-                      <Link2 className="w-3 h-3 flex-shrink-0" />
-                      <span className="text-[10px] leading-tight line-clamp-2">
-                        {field.key === 'artist'
-                          ? 'linked to Album Artist'
-                          : musicMode === 'covers'
-                            ? 'linked to Album Artist'
-                            : 'linked to Title'}
-                      </span>
-                    </span>
-                  )}
-                </label>
-                <input
-                  type={field.type || 'text'}
-                  value={tags[field.key]}
-                  onChange={(e) => handleField(field.key, e.target.value)}
-                  placeholder={field.placeholder}
-                  maxLength={field.maxLength}
-                  disabled={isSaving}
-                  className="w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all
-                    bg-white/5 border-white/10 text-white placeholder-slate-600 focus:border-brand-500/60 focus:bg-white/8
-                    disabled:opacity-50 disabled:cursor-not-allowed"
-                />
-              </div>
-            );
-          })}
-
-          {/* Genre with saved-genre autocomplete */}
-          <div>
-            <label
-              htmlFor="tag-genre"
-              className="flex items-center gap-2 text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide"
-            >
-              <span className="text-slate-500">
-                <Tag className="w-4 h-4" />
-              </span>
-              Genre
-            </label>
-            <div
-              className={`group/genre relative w-full rounded-xl border text-sm outline-none transition-all
-                bg-white/5 border-white/10 focus-within:border-brand-500/60 focus-within:bg-white/8
-                ${isSaving ? 'opacity-50' : ''}`}
-            >
-              <div className="relative px-4 py-3 pr-11">
-                {genreCompletion.suffix !== '' && (
-                  <span
-                    className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 flex text-sm whitespace-pre"
-                    aria-hidden
-                  >
-                    <span className="invisible">{tags.genre}</span>
-                    <span className="text-brand-400 font-semibold tracking-tight drop-shadow-[0_0_10px_rgba(52,211,153,0.45)]">
-                      {genreCompletion.suffix}
-                    </span>
-                  </span>
-                )}
-                <input
-                  ref={genreInputRef}
-                  type="text"
-                  id="tag-genre"
-                  value={tags.genre}
-                  onChange={(e) => handleField('genre', e.target.value)}
-                  onKeyDown={handleGenreKeyDown}
-                  placeholder="e.g. Electronic"
-                  maxLength={100}
-                  disabled={isSaving}
-                  aria-autocomplete="inline"
-                  aria-controls={genreCompletion.suffix ? 'genre-completion-hint' : undefined}
-                  className="relative z-10 w-full bg-transparent text-sm text-white placeholder-slate-600 outline-none
-                    disabled:cursor-not-allowed"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => setGenreLibraryOpen(true)}
-                disabled={isSaving}
-                title="Manage saved genres"
-                className="absolute right-2 top-1/2 -translate-y-1/2 z-20 inline-flex items-center justify-center
-                  w-8 h-8 rounded-lg text-slate-500 hover:text-brand-300 hover:bg-brand-600/15
-                  border border-transparent hover:border-brand-500/25 transition-all cursor-pointer
-                  disabled:opacity-40 disabled:cursor-not-allowed"
-                aria-label="Manage saved genres"
-              >
-                <List className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            {genreCompletion.suffix !== '' && (
-              <p id="genre-completion-hint" className="mt-1.5 text-[11px] text-brand-400/90 font-medium">
-                Preview: {genreCompletion.full}
-                <span className="text-slate-500 font-normal"> · Tab or → to apply</span>
-              </p>
-            )}
-          </div>
+          {visibleFields.map(renderTagField)}
         </div>
+
+        {fieldsPopupOpen && (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="tag-fields-title"
+            onClick={() => setFieldsPopupOpen(false)}
+          >
+            <div
+              className="w-full max-w-md max-h-[min(85vh,640px)] flex flex-col rounded-2xl bg-slate-900 border border-white/10 shadow-xl shadow-black/40"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+                <h3 id="tag-fields-title" className="text-sm font-semibold text-white">
+                  Additional tags
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setFieldsPopupOpen(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/8 transition-colors cursor-pointer"
+                  aria-label="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <p className="px-4 pt-3 text-xs text-slate-500 leading-relaxed">
+                Turn on extra tags to show them in the editor. Drag rows or use the arrows to
+                reorder any field, including the defaults.
+              </p>
+              <ul className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5 min-h-0" aria-label="Tag fields">
+                {layout.order.map((key, index) => {
+                  const field = TAG_FIELDS_BY_KEY[key];
+                  const Icon = field.icon;
+                  const isDefault = isDefaultTagKey(key);
+                  const isOn = isDefault || (isExtraTagKey(key) && layout.enabled.includes(key));
+                  return (
+                    <li
+                      key={key}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.setData('text/plain', key);
+                        setDragFieldKey(key);
+                      }}
+                      onDragOver={(e) => {
+                        if (!dragFieldKey) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        if (dragOverFieldKey !== key) setDragOverFieldKey(key);
+                      }}
+                      onDrop={(e) => { e.preventDefault(); handleFieldDrop(key); }}
+                      onDragEnd={() => { setDragFieldKey(null); setDragOverFieldKey(null); }}
+                      className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg border transition-colors
+                        ${dragOverFieldKey === key && dragFieldKey !== key
+                          ? 'bg-brand-600/15 border-brand-500/40'
+                          : 'bg-white/3 border-white/6'}
+                        ${dragFieldKey === key ? 'opacity-40' : ''}`}
+                    >
+                      <GripVertical className="w-3.5 h-3.5 text-slate-600 flex-shrink-0 cursor-grab" aria-hidden />
+                      <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${isOn ? 'text-slate-400' : 'text-slate-600'}`} />
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm truncate ${isOn ? 'text-white' : 'text-slate-500'}`}>{field.label}</p>
+                        {field.description && (
+                          <p className="text-[11px] text-slate-600 leading-tight">{field.description}</p>
+                        )}
+                      </div>
+                      {isDefault ? (
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 bg-white/5 px-1.5 py-0.5 rounded">
+                          Default
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={isOn}
+                          aria-label={`Show ${field.label}`}
+                          onClick={() => isExtraTagKey(key) && updateLayout(toggleTagField(layout, key))}
+                          className="cursor-pointer"
+                        >
+                          <ToggleSwitch on={isOn} />
+                        </button>
+                      )}
+                      <div className="flex flex-col flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => updateLayout(moveTagField(layout, key, index - 1))}
+                          disabled={index === 0}
+                          aria-label={`Move ${field.label} up`}
+                          className="text-slate-500 hover:text-white disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer"
+                        >
+                          <ChevronUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateLayout(moveTagField(layout, key, index + 1))}
+                          disabled={index === layout.order.length - 1}
+                          aria-label={`Move ${field.label} down`}
+                          className="text-slate-500 hover:text-white disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer"
+                        >
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-white/10">
+                <p className="text-[11px] text-slate-500">
+                  {isAdmin ? 'Saved to your account' : 'Saved for this browser session'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => updateLayout(DEFAULT_TAG_LAYOUT)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10
+                    text-slate-400 hover:text-white hover:bg-white/8 transition-all text-xs font-medium cursor-pointer"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Reset to default
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {mappingsLibraryOpen && (
           <div

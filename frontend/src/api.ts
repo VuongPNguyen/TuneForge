@@ -1,5 +1,6 @@
 import type { DownloadMetadata, ID3Tags, TrimRange } from './types';
 import type { ArtistMapping, AlbumRecord } from './db';
+import { normalizeTagLayout, type TagFieldLayout } from './tagFields';
 
 export async function downloadVideo(url: string, bitrate: number): Promise<DownloadMetadata> {
   const res = await fetch('/api/download', {
@@ -241,4 +242,21 @@ export async function deleteAdminAlbum(token: string, id: string): Promise<void>
     headers: adminHeaders(token),
   });
   if (!res.ok) throw new Error(`Failed to delete album (${res.status})`);
+}
+
+/** Returns the account's saved tag field layout, or null if none has been saved yet. */
+export async function getAdminTagLayout(token: string): Promise<TagFieldLayout | null> {
+  const res = await fetch('/api/admin/tag-layout', { headers: adminHeaders(token) });
+  if (!res.ok) throw new Error(`Failed to load tag layout (${res.status})`);
+  const data: { layout: unknown } = await res.json();
+  return data.layout ? normalizeTagLayout(data.layout) : null;
+}
+
+export async function putAdminTagLayout(token: string, layout: TagFieldLayout): Promise<void> {
+  const res = await fetch('/api/admin/tag-layout', {
+    method: 'PUT',
+    headers: adminHeaders(token),
+    body: JSON.stringify(layout),
+  });
+  if (!res.ok) throw new Error(`Failed to save tag layout (${res.status})`);
 }

@@ -26,6 +26,20 @@ export interface ID3Tags {
   genre: string;
   comment: string;
   album_art_base64: string | null;
+  // Additional tags, only written when enabled in the tag field layout
+  composer: string;
+  disc_number: string;
+  compilation: boolean;
+  lyricist: string;
+  conductor: string;
+  remixer: string;
+  bpm: string;
+  publisher: string;
+  copyright: string;
+  grouping: string;
+  subtitle: string;
+  isrc: string;
+  lyrics: string;
 }
 
 /** Inclusive start / exclusive-style end in seconds on the original track. */
