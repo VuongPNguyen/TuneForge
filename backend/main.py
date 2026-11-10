@@ -366,6 +366,19 @@ def _normalize_youtube_url(url: str) -> Optional[str]:
     return f"https://www.youtube.com/watch?v={vid}"
 
 
+ARTIST_DELIMITER = "/"
+
+
+def _join_artists(names) -> str:
+    """Join yt-dlp's artist list with "/" (the ID3v2.3 multi-value separator), deduped."""
+    unique: list[str] = []
+    for name in names or []:
+        cleaned = str(name).strip()
+        if cleaned and cleaned not in unique:
+            unique.append(cleaned)
+    return ARTIST_DELIMITER.join(unique)
+
+
 def _validate_file_id(file_id: str) -> bool:
     """Return True only for well-formed v4 UUIDs."""
     return bool(UUID_RE.match(file_id))
@@ -711,9 +724,10 @@ async def download_video(request: Request, req: DownloadRequest):
     metadata = {
         "file_id": file_id,
         "title": info.get("title", ""),
-        "artist": info.get("artist") or info.get("uploader", ""),
+        # yt-dlp's legacy "artist"/"album_artist" fields are comma-joined copies of these lists.
+        "artist": _join_artists(info.get("artists")) or info.get("uploader", ""),
         "album": info.get("album", ""),
-        "album_artist": info.get("album_artist") or info.get("uploader", ""),
+        "album_artist": _join_artists(info.get("album_artists")) or info.get("uploader", ""),
         "year": str(info.get("release_year") or info.get("upload_date", "")[:4] or ""),
         "track_number": "",
         "genre": info.get("genre", ""),
@@ -968,7 +982,7 @@ Instructions — follow each one carefully:
 
 3. **track_number**: The track's position on the album as listed on Apple Music or Spotify. Return a single integer only (e.g. "3"). Do not include the total track count or any slash notation. Return "" only if unknown.
 
-4. **artist / album_artist**: Use the exact artist name formatting from Apple Music or Spotify (e.g. correct capitalisation, spacing). Return unchanged if already correct.
+4. **artist / album_artist**: Use the exact artist name formatting from Apple Music or Spotify (e.g. correct capitalisation, spacing). When there are multiple artists, separate each one with "/" and no surrounding spaces (e.g. "Artist A/Artist B"), never with commas, "&" or "x". Return unchanged if already correct.
 
 5. **year**: The original release year as a 4-digit string, matching Apple Music or Spotify. Prefer single/album release date over YouTube upload date. Return "" if unknown.
 

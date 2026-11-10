@@ -16,6 +16,7 @@ import {
 } from './api';
 import { lookupArtist, lookupAlbum, blobToBase64, rememberGenre } from './db';
 import { safeFilename } from './utils/filename';
+import { artistsForFilename, mapArtists } from './utils/artists';
 import { loadSessionTagLayout, saveSessionTagLayout, type TagFieldLayout } from './tagFields';
 import type { AppStep, DownloadMetadata, ID3Tags, TrimRange } from './types';
 import type { ArtistMapping, AlbumRecord } from './db';
@@ -130,10 +131,9 @@ export default function App() {
 
       if (isAdmin) {
         // Use in-memory admin mappings
-        const artistMap = adminMappings.find((m) => m.raw === data.artist);
-        if (artistMap) data.artist = artistMap.display;
-        const albumArtistMap = adminMappings.find((m) => m.raw === data.album_artist);
-        if (albumArtistMap) data.album_artist = albumArtistMap.display;
+        const lookup = (raw: string) => adminMappings.find((m) => m.raw === raw)?.display;
+        data.artist = await mapArtists(data.artist, lookup);
+        data.album_artist = await mapArtists(data.album_artist, lookup);
 
         const albumRecord = adminAlbums.find(
           (a) => a.album_artist === data.album_artist && a.album === data.album
@@ -148,10 +148,8 @@ export default function App() {
         }
       } else {
         // Use IndexedDB for non-admin users
-        const artistDisplay = await lookupArtist(data.artist);
-        if (artistDisplay) data.artist = artistDisplay;
-        const albumArtistDisplay = await lookupArtist(data.album_artist);
-        if (albumArtistDisplay) data.album_artist = albumArtistDisplay;
+        data.artist = await mapArtists(data.artist, lookupArtist);
+        data.album_artist = await mapArtists(data.album_artist, lookupArtist);
 
         const albumRecord = await lookupAlbum(data.album_artist, data.album);
         if (albumRecord) {
@@ -192,7 +190,9 @@ export default function App() {
     setError(null);
     try {
       const rawFilename =
-        [tags.album_artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
+        [artistsForFilename(tags.album_artist), tags.title].filter(Boolean).join(' - ') ||
+        metadata.title ||
+        'download';
       const filename = safeFilename(rawFilename);
       const blob = await saveWithTags(metadata.file_id, tags, filename, trim);
       const fullFilename = filename + '.mp3';
