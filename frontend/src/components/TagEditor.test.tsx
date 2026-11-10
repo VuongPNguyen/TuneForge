@@ -173,6 +173,33 @@ describe('TagEditor rendering', () => {
     });
   });
 
+  it('replaces only the matching artist when adding a mapping for a multi-artist value', async () => {
+    const user = userEvent.setup();
+    setup({ artist: 'Artist A/Artist B', album_artist: 'Artist A' });
+
+    await user.click(screen.getByRole('button', { name: /music/i }));
+
+    // Set in one change: clearing first would let the prefill effect refill the original artist.
+    const channelInput = await screen.findByPlaceholderText(/channel name \(exact\)/i);
+    fireEvent.change(channelInput, { target: { value: 'Artist B' } });
+    const displayInput = screen.getByPlaceholderText(/display name/i);
+    await user.clear(displayInput);
+    await user.type(displayInput, 'Mapped B');
+    await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+    const artistInput = screen.getByPlaceholderText('Artist name') as HTMLInputElement;
+    const albumArtistInput = screen.getByPlaceholderText('Album artist name') as HTMLInputElement;
+    await waitFor(() => {
+      expect(artistInput.value).toBe('Artist A/Mapped B');
+    });
+    expect(albumArtistInput.value).toBe('Artist A');
+  });
+
+  it('lists multiple album artists comma-separated in the filename preview', () => {
+    setup({ album_artist: 'Artist A/Artist B' });
+    expect(screen.getByText('Artist A, Artist B - Test Track.mp3')).toBeInTheDocument();
+  });
+
   it('does not show a remove button when there is no art', () => {
     setup({ thumbnail_b64: null });
     expect(screen.queryByRole('button', { name: /remove/i })).not.toBeInTheDocument();

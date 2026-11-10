@@ -3,13 +3,18 @@
   - Does quickly save albums.
 - Fix container issue for docker. Does not seem permanent.
 - Fix save album
-- Multiple Artists should be separated by a slash "/"
 - Bad image link gives bad error.
 - Change the Covers, Singles, Album widget.
   - Either can make a widget on the side in the margins or keep at top of screen
   - Should follow the user as they move down the page.
 
 Complete:
+- 11/09/2026
+  - Multiple Artists are separated by a slash "/"
+    - Artist and album artist from YouTube's artist list are joined with "/" (e.g. "Artist A/Artist B"); AI autofill follows the same format.
+    - Artist mappings apply to each artist individually, after first checking for a mapping of the full value.
+    - The filename lists multiple artists comma-separated, since "/" isn't allowed in filenames.
+
 - 11/09/2026
   - Add sorting options to artist mapping
     - Original or display name A–Z / Z–A, or newest / oldest first; the choice is remembered.

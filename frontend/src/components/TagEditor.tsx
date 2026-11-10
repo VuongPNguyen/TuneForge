@@ -25,6 +25,7 @@ import {
   type ArtistMapping, type AlbumRecord,
 } from '../db';
 import { safeFilename as sanitizeFilename } from '../utils/filename';
+import { artistsForFilename, replaceArtist } from '../utils/artists';
 import { loadActiveTab, saveActiveTab, type ActiveTab } from '../utils/activeTab';
 import {
   MAPPING_SORT_FIELDS, loadMappingSort, saveMappingSort, sortMappings,
@@ -569,8 +570,8 @@ export default function TagEditor({
       const albumWasDerivedFromAlbumArtist =
         prev.album_artist ? prev.album === `${prev.album_artist} Covers` : prev.album === '';
 
-      const artist = prev.artist === raw ? display : prev.artist;
-      const album_artist = prev.album_artist === raw ? display : prev.album_artist;
+      const artist = replaceArtist(prev.artist, raw, display);
+      const album_artist = replaceArtist(prev.album_artist, raw, display);
 
       if (musicMode === 'covers') {
         // In covers mode, artist usually follows album_artist. Preserve that behavior
@@ -806,7 +807,9 @@ export default function TagEditor({
   }
 
   const rawFilename =
-    [tags.album_artist, tags.title].filter(Boolean).join(' - ') || metadata.title || 'download';
+    [artistsForFilename(tags.album_artist), tags.title].filter(Boolean).join(' - ') ||
+    metadata.title ||
+    'download';
   const safeFilename = sanitizeFilename(rawFilename);
 
   // ── Field layout popup handlers ────────────────────────────────────────────

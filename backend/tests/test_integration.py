@@ -128,6 +128,42 @@ class TestDownloadEndpoint:
         assert resp.status_code in (400, 429)
         assert called_urls == ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
 
+    @pytest.mark.parametrize("info, expected_artist, expected_album_artist", [
+        (
+            {"artists": ["aespa", "tripleS"], "album_artists": ["aespa"], "uploader": "Chan"},
+            "aespa/tripleS",
+            "aespa",
+        ),
+        ({"uploader": "Chan"}, "Chan", "Chan"),
+    ])
+    def test_download_joins_multiple_artists_with_slash(
+        self, tmp_path, info, expected_artist, expected_album_artist
+    ):
+        import asyncio as _asyncio
+        import main as main_module
+
+        def fake_download(url, opts):
+            # Simulate yt-dlp writing the converted MP3 to the requested output path
+            out = opts["outtmpl"].replace("%(ext)s", "mp3")
+            with open(out, "wb") as f:
+                f.write(b"\x00")
+            return {"title": "Song", **info}
+
+        with patch.object(main_module, "_DOWNLOAD_SEM", _asyncio.Semaphore(1), create=True), \
+             patch("main._download", side_effect=fake_download), \
+             patch("main._check_disk_space"):
+            resp = client.post(
+                "/api/download",
+                json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "bitrate": 256},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        try:
+            assert data["artist"] == expected_artist
+            assert data["album_artist"] == expected_album_artist
+        finally:
+            (TEMP_DIR / f"{data['file_id']}.mp3").unlink(missing_ok=True)
+
     def test_rejects_url_without_extractable_video_id(self):
         resp = client.post(
             "/api/download",

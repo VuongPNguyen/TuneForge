@@ -15,9 +15,29 @@ from main import (
     _safe_filename,
     _safe_log_url,
     _resolve_trim_range,
+    _join_artists,
     _PRIVATE_NETWORKS,
 )
 from fastapi import HTTPException
+
+
+# ---------------------------------------------------------------------------
+# _join_artists
+# ---------------------------------------------------------------------------
+
+class TestJoinArtists:
+    def test_joins_multiple_artists_with_slash(self):
+        assert _join_artists(["aespa", "tripleS"]) == "aespa/tripleS"
+
+    def test_single_artist_unchanged(self):
+        assert _join_artists(["AC/DC"]) == "AC/DC"
+
+    def test_strips_blanks_and_duplicates(self):
+        assert _join_artists([" A ", "", "B", "A"]) == "A/B"
+
+    @pytest.mark.parametrize("value", [None, []])
+    def test_empty_input_returns_empty_string(self, value):
+        assert _join_artists(value) == ""
 
 
 # ---------------------------------------------------------------------------
