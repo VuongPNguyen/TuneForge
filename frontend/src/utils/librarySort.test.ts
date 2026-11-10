@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
-  DEFAULT_MAPPING_SORT, MAPPING_SORT_OPTIONS, loadMappingSort, saveMappingSort, sortMappings,
+  DEFAULT_MAPPING_SORT, loadMappingSort, saveMappingSort, sortMappings,
   loadGenreSort, saveGenreSort, sortGenres, filterMappings, filterGenres,
+  flipDirection, directionLabel,
+  type MappingSortField, type SortDirection,
 } from './librarySort';
 
 const MAPPINGS = [
@@ -10,9 +12,9 @@ const MAPPINGS = [
   { raw: 'gamma', display: 'Xi' },
 ];
 
-function sortBy(id: string) {
-  const option = MAPPING_SORT_OPTIONS.find((o) => o.id === id)!;
-  return sortMappings(MAPPINGS, option.sort).map((m) => m.raw);
+function sortBy(id: `${MappingSortField}-${SortDirection}`) {
+  const [by, direction] = id.split('-') as [MappingSortField, SortDirection];
+  return sortMappings(MAPPINGS, { by, direction }).map((m) => m.raw);
 }
 
 describe('sortMappings', () => {
@@ -73,8 +75,25 @@ describe('mapping sort persistence', () => {
   });
 
   it('round-trips a saved sort', () => {
-    const newest = MAPPING_SORT_OPTIONS.find((o) => o.id === 'date-desc')!.sort;
-    saveMappingSort(newest);
-    expect(loadMappingSort()).toEqual(newest);
+    saveMappingSort({ by: 'date', direction: 'desc' });
+    expect(loadMappingSort()).toEqual({ by: 'date', direction: 'desc' });
+  });
+
+  it('reads values saved by the previous single-menu format', () => {
+    localStorage.setItem('mapping_sort', 'display-desc');
+    expect(loadMappingSort()).toEqual({ by: 'display', direction: 'desc' });
+  });
+});
+
+describe('direction helpers', () => {
+  it('flips direction', () => {
+    expect(flipDirection('asc')).toBe('desc');
+    expect(flipDirection('desc')).toBe('asc');
+  });
+
+  it('describes direction in terms of the field', () => {
+    expect(directionLabel('raw', 'asc')).toBe('A–Z');
+    expect(directionLabel('name', 'desc')).toBe('Z–A');
+    expect(directionLabel('date', 'desc')).toBe('Newest first');
   });
 });

@@ -2,26 +2,29 @@ import type { ArtistMapping } from '../db';
 
 export type SortDirection = 'asc' | 'desc';
 
+export type MappingSortField = 'raw' | 'display' | 'date';
+
 export interface MappingSort {
-  by: 'name' | 'date';
-  /** Which name to sort by when `by` is 'name'. */
-  nameField: 'raw' | 'display';
+  by: MappingSortField;
   direction: SortDirection;
 }
 
-export const DEFAULT_MAPPING_SORT: MappingSort = { by: 'name', nameField: 'raw', direction: 'asc' };
+export const DEFAULT_MAPPING_SORT: MappingSort = { by: 'raw', direction: 'asc' };
 
-export const MAPPING_SORT_OPTIONS: { id: string; label: string; sort: MappingSort }[] = [
-  { id: 'raw-asc', label: 'Original name (A–Z)', sort: { by: 'name', nameField: 'raw', direction: 'asc' } },
-  { id: 'raw-desc', label: 'Original name (Z–A)', sort: { by: 'name', nameField: 'raw', direction: 'desc' } },
-  { id: 'display-asc', label: 'Display name (A–Z)', sort: { by: 'name', nameField: 'display', direction: 'asc' } },
-  { id: 'display-desc', label: 'Display name (Z–A)', sort: { by: 'name', nameField: 'display', direction: 'desc' } },
-  { id: 'date-desc', label: 'Newest first', sort: { by: 'date', nameField: 'raw', direction: 'desc' } },
-  { id: 'date-asc', label: 'Oldest first', sort: { by: 'date', nameField: 'raw', direction: 'asc' } },
+export const MAPPING_SORT_FIELDS: { id: MappingSortField; label: string }[] = [
+  { id: 'raw', label: 'Original name' },
+  { id: 'display', label: 'Display name' },
+  { id: 'date', label: 'Date added' },
 ];
 
-export function mappingSortId(sort: MappingSort): string {
-  return sort.by === 'date' ? `date-${sort.direction}` : `${sort.nameField}-${sort.direction}`;
+export function flipDirection(direction: SortDirection): SortDirection {
+  return direction === 'asc' ? 'desc' : 'asc';
+}
+
+/** Human-readable meaning of a direction for the given field, e.g. for tooltips. */
+export function directionLabel(by: MappingSortField | 'name', direction: SortDirection): string {
+  if (by === 'date') return direction === 'asc' ? 'Oldest first' : 'Newest first';
+  return direction === 'asc' ? 'A–Z' : 'Z–A';
 }
 
 function compareText(a: string, b: string): number {
@@ -36,7 +39,7 @@ export function sortMappings(mappings: ArtistMapping[], sort: MappingSort): Arti
       if (diff !== 0) return diff * dir;
       return compareText(a.raw, b.raw);
     }
-    return compareText(a[sort.nameField], b[sort.nameField]) * dir || compareText(a.raw, b.raw);
+    return compareText(a[sort.by], b[sort.by]) * dir || compareText(a.raw, b.raw);
   });
 }
 
@@ -88,10 +91,14 @@ export function saveGenreSort(direction: SortDirection): void {
 
 const MAPPING_SORT_KEY = 'mapping_sort';
 
+/** Stored as `<field>-<direction>`, e.g. `display-desc`. */
 export function loadMappingSort(): MappingSort {
   try {
-    const id = localStorage.getItem(MAPPING_SORT_KEY);
-    return MAPPING_SORT_OPTIONS.find((o) => o.id === id)?.sort ?? DEFAULT_MAPPING_SORT;
+    const [by, direction] = (localStorage.getItem(MAPPING_SORT_KEY) ?? '').split('-');
+    if (MAPPING_SORT_FIELDS.some((f) => f.id === by) && (direction === 'asc' || direction === 'desc')) {
+      return { by: by as MappingSortField, direction };
+    }
+    return DEFAULT_MAPPING_SORT;
   } catch {
     return DEFAULT_MAPPING_SORT;
   }
@@ -99,7 +106,7 @@ export function loadMappingSort(): MappingSort {
 
 export function saveMappingSort(sort: MappingSort): void {
   try {
-    localStorage.setItem(MAPPING_SORT_KEY, mappingSortId(sort));
+    localStorage.setItem(MAPPING_SORT_KEY, `${sort.by}-${sort.direction}`);
   } catch {
     // Storage may be unavailable (e.g. privacy mode); the sort still applies for now.
   }

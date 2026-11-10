@@ -615,16 +615,17 @@ describe('TagEditor mappings library', () => {
 
   it('can sort by display name or date added', async () => {
     const user = await openMappingsLibrary();
-    const select = screen.getByLabelText(/sort mappings/i);
+    const select = screen.getByLabelText(/sort mappings by/i);
 
-    await user.selectOptions(select, 'display-asc');
+    await user.selectOptions(select, 'display');
     expect(mappingRowOrder()).toEqual(['beta channel', 'gamma channel', 'alpha channel']);
 
-    await user.selectOptions(select, 'date-desc');
-    expect(mappingRowOrder()).toEqual(['alpha channel', 'beta channel', 'gamma channel']);
-
-    await user.selectOptions(select, 'date-asc');
+    await user.selectOptions(select, 'date');
     expect(mappingRowOrder()).toEqual(['gamma channel', 'beta channel', 'alpha channel']);
+
+    await user.click(screen.getByRole('button', { name: /sort direction: ascending \(oldest first\)/i }));
+    expect(mappingRowOrder()).toEqual(['alpha channel', 'beta channel', 'gamma channel']);
+    expect(screen.getByRole('button', { name: /descending \(newest first\)/i })).toBeInTheDocument();
   });
 
   it('searches both original and display names', async () => {
@@ -670,7 +671,7 @@ describe('TagEditor genres library', () => {
     const user = await openGenreLibrary();
     expect(genreRowOrder()).toEqual(['Ambient', 'Jazz', 'Rock']);
 
-    await user.selectOptions(screen.getByLabelText(/sort genres/i), 'desc');
+    await user.click(screen.getByRole('button', { name: /sort direction: ascending \(a–z\)/i }));
     expect(genreRowOrder()).toEqual(['Rock', 'Jazz', 'Ambient']);
   });
 

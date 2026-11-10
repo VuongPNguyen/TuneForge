@@ -4,7 +4,7 @@ import {
   Image as ImageIcon, Upload, X, Download, RotateCcw, Loader2,
   Link2, Wand2, BookmarkPlus, Check, AlertCircle,
   ArrowRight, Plus, Trash2, ChevronDown, ChevronUp, Sparkles, List, Scissors,
-  SlidersHorizontal, GripVertical, Search,
+  SlidersHorizontal, GripVertical, Search, ArrowUp, ArrowDown,
 } from 'lucide-react';
 import type { DownloadMetadata, ID3Tags, TrimRange } from '../types';
 import {
@@ -27,9 +27,10 @@ import {
 import { safeFilename as sanitizeFilename } from '../utils/filename';
 import { loadActiveTab, saveActiveTab, type ActiveTab } from '../utils/activeTab';
 import {
-  MAPPING_SORT_OPTIONS, loadMappingSort, mappingSortId, saveMappingSort, sortMappings,
+  MAPPING_SORT_FIELDS, loadMappingSort, saveMappingSort, sortMappings,
   loadGenreSort, saveGenreSort, sortGenres, filterMappings, filterGenres,
-  type MappingSort, type SortDirection,
+  flipDirection, directionLabel,
+  type MappingSort, type MappingSortField, type SortDirection,
 } from '../utils/librarySort';
 
 interface Props {
@@ -63,6 +64,29 @@ function ToggleSwitch({ on }: { on: boolean }) {
           ${on ? 'translate-x-4 bg-white' : 'translate-x-0 bg-slate-400'}`}
       />
     </span>
+  );
+}
+
+function SortDirectionButton({ direction, meaning, onToggle }: {
+  direction: SortDirection;
+  /** What the current direction means, e.g. "A–Z" or "Newest first". */
+  meaning: string;
+  onToggle: () => void;
+}) {
+  const Arrow = direction === 'asc' ? ArrowUp : ArrowDown;
+  const label = `${direction === 'asc' ? 'Ascending' : 'Descending'} (${meaning})`;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={`${label} — click to reverse`}
+      aria-label={`Sort direction: ${label}`}
+      className="inline-flex items-center justify-center w-8 h-8 flex-shrink-0 rounded-lg bg-white/5 border border-white/10
+        text-slate-300 hover:text-white hover:bg-white/10 transition-all cursor-pointer
+        outline-none focus:border-brand-500/60"
+    >
+      <Arrow className="w-3.5 h-3.5" />
+    </button>
   );
 }
 
@@ -223,11 +247,9 @@ export default function TagEditor({
     saveGenreSort(direction);
   }
 
-  function handleMappingSortChange(id: string) {
-    const option = MAPPING_SORT_OPTIONS.find((o) => o.id === id);
-    if (!option) return;
-    setMappingSort(option.sort);
-    saveMappingSort(option.sort);
+  function handleMappingSortChange(next: MappingSort) {
+    setMappingSort(next);
+    saveMappingSort(next);
   }
 
   // Prefill the "Channel name (exact)" field with the original channel name
@@ -1705,16 +1727,25 @@ export default function TagEditor({
                   />
                 </div>
                 <select
-                  value={mappingSortId(mappingSort)}
-                  onChange={(e) => handleMappingSortChange(e.target.value)}
-                  aria-label="Sort mappings"
+                  value={mappingSort.by}
+                  onChange={(e) =>
+                    handleMappingSortChange({ ...mappingSort, by: e.target.value as MappingSortField })
+                  }
+                  aria-label="Sort mappings by"
                   className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-slate-300
                     outline-none focus:border-brand-500/60 cursor-pointer"
                 >
-                  {MAPPING_SORT_OPTIONS.map((o) => (
-                    <option key={o.id} value={o.id} className="bg-slate-900">{o.label}</option>
+                  {MAPPING_SORT_FIELDS.map((f) => (
+                    <option key={f.id} value={f.id} className="bg-slate-900">{f.label}</option>
                   ))}
                 </select>
+                <SortDirectionButton
+                  direction={mappingSort.direction}
+                  meaning={directionLabel(mappingSort.by, mappingSort.direction)}
+                  onToggle={() =>
+                    handleMappingSortChange({ ...mappingSort, direction: flipDirection(mappingSort.direction) })
+                  }
+                />
               </div>
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5 min-h-0">
                 {visibleMappings.length === 0 ? (
@@ -1801,16 +1832,11 @@ export default function TagEditor({
                       placeholder-slate-600 outline-none focus:border-brand-500/60"
                   />
                 </div>
-                <select
-                  value={genreSort}
-                  onChange={(e) => handleGenreSortChange(e.target.value as SortDirection)}
-                  aria-label="Sort genres"
-                  className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-slate-300
-                    outline-none focus:border-brand-500/60 cursor-pointer"
-                >
-                  <option value="asc" className="bg-slate-900">A–Z</option>
-                  <option value="desc" className="bg-slate-900">Z–A</option>
-                </select>
+                <SortDirectionButton
+                  direction={genreSort}
+                  meaning={directionLabel('name', genreSort)}
+                  onToggle={() => handleGenreSortChange(flipDirection(genreSort))}
+                />
               </div>
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5 min-h-0">
                 {visibleGenres.length === 0 ? (
