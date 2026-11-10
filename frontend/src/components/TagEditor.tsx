@@ -60,7 +60,7 @@ type ActiveTab = 'default' | 'music';
 
 const MODE_DESCRIPTIONS: Record<MusicMode, string> = {
   covers: 'Artist and album start from the album artist (editable; they update again when it changes)',
-  singles: 'Album mirrors title and artist mirrors album artist (both editable; they update when the parent changes)',
+  singles: 'Album mirrors title, artist mirrors album artist and track number is set to 1 (all editable; album and artist update when the parent changes)',
   albums: 'Bookmark genre, year and art so they autofill on future downloads',
 };
 
@@ -328,7 +328,7 @@ export default function TagEditor({
         };
       }
       if (newMode === 'singles') {
-        return { ...prev, album: prev.title };
+        return { ...prev, album: prev.title, track_number: '1' };
       }
       return prev;
     });

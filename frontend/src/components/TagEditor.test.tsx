@@ -197,6 +197,17 @@ describe('TagEditor field editing', () => {
       expect(screen.getByText(/New Album Artist - Test Track\.mp3/)).toBeInTheDocument();
     });
   });
+
+  it('sets track number to 1 when singles mode is enabled', async () => {
+    const user = userEvent.setup();
+    setup({ track_number: '7' });
+
+    await user.click(screen.getByRole('button', { name: /music/i }));
+    await user.click(screen.getByRole('button', { name: /^singles$/i }));
+
+    expect(screen.getByPlaceholderText('e.g. 1 or 1/12')).toHaveValue('1');
+    expect(screen.getByPlaceholderText('Album name')).toHaveValue('Test Track');
+  });
 });
 
 // ---------------------------------------------------------------------------
