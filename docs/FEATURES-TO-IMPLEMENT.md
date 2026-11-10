@@ -5,8 +5,6 @@
 - Fix save album
 - Multiple Artists should be separated by a slash "/"
 - Bad image link gives bad error.
-- Add search features for artist mapping and genre
-  - Search should look at both original and display
 - Change the Covers, Singles, Album widget.
   - Either can make a widget on the side in the margins or keep at top of screen
   - Should follow the user as they move down the page.
@@ -17,6 +15,8 @@ Complete:
     - Original or display name A–Z / Z–A, or newest / oldest first; the choice is remembered.
   - Add sorting options to genre
     - A–Z / Z–A; the choice is remembered.
+  - Add search features for artist mapping and genre
+    - Mapping search matches both original and display names; genre search matches the name.
   - Have memory to remember previous "page" since last download.
     - The last selected tab (Default or Music) is stored in localStorage and reopened on the next download.
 

@@ -626,6 +626,22 @@ describe('TagEditor mappings library', () => {
     await user.selectOptions(select, 'date-asc');
     expect(mappingRowOrder()).toEqual(['gamma channel', 'beta channel', 'alpha channel']);
   });
+
+  it('searches both original and display names', async () => {
+    const user = await openMappingsLibrary();
+    const search = screen.getByLabelText(/search mappings/i);
+
+    await user.type(search, 'zeta');
+    expect(mappingRowOrder()).toEqual(['alpha channel']);
+
+    await user.clear(search);
+    await user.type(search, 'gamma');
+    expect(mappingRowOrder()).toEqual(['gamma channel']);
+
+    await user.clear(search);
+    await user.type(search, 'nothing here');
+    expect(screen.getByText(/no mappings match/i)).toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -656,5 +672,11 @@ describe('TagEditor genres library', () => {
 
     await user.selectOptions(screen.getByLabelText(/sort genres/i), 'desc');
     expect(genreRowOrder()).toEqual(['Rock', 'Jazz', 'Ambient']);
+  });
+
+  it('filters genres by search text', async () => {
+    const user = await openGenreLibrary();
+    await user.type(screen.getByLabelText(/search genres/i), 'AM');
+    expect(genreRowOrder()).toEqual(['Ambient']);
   });
 });

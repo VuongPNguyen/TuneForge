@@ -45,6 +45,27 @@ export function sortGenres(names: string[], direction: SortDirection): string[] 
   return [...names].sort((a, b) => compareText(a, b) * dir);
 }
 
+// ── Search ──────────────────────────────────────────────────────────────────
+
+function normalizeQuery(query: string): string {
+  return query.trim().toLocaleLowerCase();
+}
+
+/** Keep mappings whose original or display name contains the query. */
+export function filterMappings(mappings: ArtistMapping[], query: string): ArtistMapping[] {
+  const q = normalizeQuery(query);
+  if (!q) return mappings;
+  return mappings.filter(
+    (m) => m.raw.toLocaleLowerCase().includes(q) || m.display.toLocaleLowerCase().includes(q)
+  );
+}
+
+export function filterGenres(names: string[], query: string): string[] {
+  const q = normalizeQuery(query);
+  if (!q) return names;
+  return names.filter((n) => n.toLocaleLowerCase().includes(q));
+}
+
 // ── Persistence ─────────────────────────────────────────────────────────────
 
 const GENRE_SORT_KEY = 'genre_sort';

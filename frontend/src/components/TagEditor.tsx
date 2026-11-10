@@ -4,7 +4,7 @@ import {
   Image as ImageIcon, Upload, X, Download, RotateCcw, Loader2,
   Link2, Wand2, BookmarkPlus, Check, AlertCircle,
   ArrowRight, Plus, Trash2, ChevronDown, ChevronUp, Sparkles, List, Scissors,
-  SlidersHorizontal, GripVertical,
+  SlidersHorizontal, GripVertical, Search,
 } from 'lucide-react';
 import type { DownloadMetadata, ID3Tags, TrimRange } from '../types';
 import {
@@ -28,7 +28,7 @@ import { safeFilename as sanitizeFilename } from '../utils/filename';
 import { loadActiveTab, saveActiveTab, type ActiveTab } from '../utils/activeTab';
 import {
   MAPPING_SORT_OPTIONS, loadMappingSort, mappingSortId, saveMappingSort, sortMappings,
-  loadGenreSort, saveGenreSort, sortGenres,
+  loadGenreSort, saveGenreSort, sortGenres, filterMappings, filterGenres,
   type MappingSort, type SortDirection,
 } from '../utils/librarySort';
 
@@ -190,6 +190,7 @@ export default function TagEditor({
   );
   const [mappingsLibraryOpen, setMappingsLibraryOpen] = useState(false);
   const [mappingSort, setMappingSort] = useState<MappingSort>(loadMappingSort);
+  const [mappingQuery, setMappingQuery] = useState('');
   const [albumsExpanded, setAlbumsExpanded] = useState(false);
   const [displayEdits, setDisplayEdits] = useState<Record<string, string>>({});
   const [newRaw, setNewRaw] = useState('');
@@ -199,6 +200,7 @@ export default function TagEditor({
   const [savedGenres, setSavedGenres] = useState<string[]>([]);
   const [genreLibraryOpen, setGenreLibraryOpen] = useState(false);
   const [genreSort, setGenreSort] = useState<SortDirection>(loadGenreSort);
+  const [genreQuery, setGenreQuery] = useState('');
   const [genreEdits, setGenreEdits] = useState<Record<string, string>>({});
   const [newSavedGenre, setNewSavedGenre] = useState('');
   const genreInputRef = useRef<HTMLInputElement>(null);
@@ -206,12 +208,15 @@ export default function TagEditor({
   // True when a music mode is active that auto-computes certain fields
   const isSmartMode = activeTab === 'music' && (musicMode === 'covers' || musicMode === 'singles');
 
-  const sortedMappings = useMemo(
-    () => sortMappings(mappings, mappingSort),
-    [mappings, mappingSort]
+  const visibleMappings = useMemo(
+    () => sortMappings(filterMappings(mappings, mappingQuery), mappingSort),
+    [mappings, mappingQuery, mappingSort]
   );
 
-  const sortedGenres = useMemo(() => sortGenres(savedGenres, genreSort), [savedGenres, genreSort]);
+  const visibleGenres = useMemo(
+    () => sortGenres(filterGenres(savedGenres, genreQuery), genreSort),
+    [savedGenres, genreQuery, genreSort]
+  );
 
   function handleGenreSortChange(direction: SortDirection) {
     setGenreSort(direction);
@@ -1686,7 +1691,19 @@ export default function TagEditor({
                 Automatically replaces a channel name with your preferred display name before the
                 tag editor opens. Edit display names or remove entries you no longer need.
               </p>
-              <div className="flex items-center justify-end gap-2 px-4 pt-3">
+              <div className="flex items-center gap-2 px-4 pt-3">
+                <div className="relative flex-1 min-w-0">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+                  <input
+                    type="search"
+                    value={mappingQuery}
+                    onChange={(e) => setMappingQuery(e.target.value)}
+                    placeholder="Search original or display name"
+                    aria-label="Search mappings"
+                    className="w-full pl-8 pr-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white
+                      placeholder-slate-600 outline-none focus:border-brand-500/60"
+                  />
+                </div>
                 <select
                   value={mappingSortId(mappingSort)}
                   onChange={(e) => handleMappingSortChange(e.target.value)}
@@ -1700,10 +1717,12 @@ export default function TagEditor({
                 </select>
               </div>
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5 min-h-0">
-                {sortedMappings.length === 0 ? (
-                  <p className="text-sm text-slate-600 py-2">No mappings saved yet.</p>
+                {visibleMappings.length === 0 ? (
+                  <p className="text-sm text-slate-600 py-2">
+                    {mappings.length === 0 ? 'No mappings saved yet.' : `No mappings match “${mappingQuery.trim()}”.`}
+                  </p>
                 ) : (
-                  sortedMappings.map((m) => (
+                  visibleMappings.map((m) => (
                     <div
                       key={m.raw}
                       className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/3 border border-white/6"
@@ -1769,7 +1788,19 @@ export default function TagEditor({
               <p className="px-4 pt-3 text-xs text-slate-500 leading-relaxed">
                 Genres are remembered when you save and download a track. Edit names or remove entries you no longer need.
               </p>
-              <div className="flex items-center justify-end gap-2 px-4 pt-3">
+              <div className="flex items-center gap-2 px-4 pt-3">
+                <div className="relative flex-1 min-w-0">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+                  <input
+                    type="search"
+                    value={genreQuery}
+                    onChange={(e) => setGenreQuery(e.target.value)}
+                    placeholder="Search genres"
+                    aria-label="Search genres"
+                    className="w-full pl-8 pr-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white
+                      placeholder-slate-600 outline-none focus:border-brand-500/60"
+                  />
+                </div>
                 <select
                   value={genreSort}
                   onChange={(e) => handleGenreSortChange(e.target.value as SortDirection)}
@@ -1782,10 +1813,14 @@ export default function TagEditor({
                 </select>
               </div>
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5 min-h-0">
-                {sortedGenres.length === 0 ? (
-                  <p className="text-sm text-slate-600 py-2">No genres saved yet — download a track with a genre to build this list.</p>
+                {visibleGenres.length === 0 ? (
+                  <p className="text-sm text-slate-600 py-2">
+                    {savedGenres.length === 0
+                      ? 'No genres saved yet — download a track with a genre to build this list.'
+                      : `No genres match “${genreQuery.trim()}”.`}
+                  </p>
                 ) : (
-                  sortedGenres.map((name) => (
+                  visibleGenres.map((name) => (
                     <div
                       key={name}
                       className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/3 border border-white/6"

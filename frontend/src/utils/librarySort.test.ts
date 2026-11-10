@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_MAPPING_SORT, MAPPING_SORT_OPTIONS, loadMappingSort, saveMappingSort, sortMappings,
-  loadGenreSort, saveGenreSort, sortGenres,
+  loadGenreSort, saveGenreSort, sortGenres, filterMappings, filterGenres,
 } from './librarySort';
 
 const MAPPINGS = [
@@ -49,6 +49,19 @@ describe('sortGenres', () => {
     expect(loadGenreSort()).toBe('asc');
     saveGenreSort('desc');
     expect(loadGenreSort()).toBe('desc');
+  });
+});
+
+describe('search', () => {
+  it('matches mappings on original or display name, case-insensitively', () => {
+    expect(filterMappings(MAPPINGS, 'ALP').map((m) => m.raw)).toEqual(['Alpha']);
+    expect(filterMappings(MAPPINGS, 'xi').map((m) => m.raw)).toEqual(['gamma']);
+    expect(filterMappings(MAPPINGS, '  ')).toBe(MAPPINGS);
+    expect(filterMappings(MAPPINGS, 'nope')).toEqual([]);
+  });
+
+  it('matches genres by substring', () => {
+    expect(filterGenres(['Synth-pop', 'K-Pop', 'Rock'], 'pop')).toEqual(['Synth-pop', 'K-Pop']);
   });
 });
 
