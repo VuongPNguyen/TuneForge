@@ -16,15 +16,17 @@
   - Alphabetical, asc/desc
 - Add search features for artist mapping and genre
   - Search should look at both original and display
-- Add an additional tags button with popup.
-  - Needs a composer section.
-  - Should be a toggle to add a field to the main page.
-  - Should add fields in-between the main fields and file output.
 - Change the Covers, Singles, Album widget.
   - Either can make a widget on the side in the margins or keep at top of screen
   - Should follow the user as they move down the page.
 
 Complete:
+- 11/09/2026
+  - Add an additional tags button with popup.
+    - Toggle extra ID3 tags (composer, disc number, compilation, lyricist, BPM, lyrics, etc.) onto the main page.
+    - Reorder any field, including the defaults, by dragging or with the arrow buttons.
+    - Layout is saved to the account when signed in, otherwise for the browser session.
+
 - 09/29/2026
   - Add trimming feature
     - Dual-thumb range slider plus start/end mm:ss inputs in TagEditor.

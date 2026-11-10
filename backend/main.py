@@ -12,7 +12,7 @@ import hmac
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse, parse_qs, quote as urlquote
 
@@ -31,7 +31,8 @@ from jose import jwt, JWTError
 
 import yt_dlp
 from mutagen.id3 import (
-    ID3, TIT2, TPE1, TALB, TPE2, TDRC, TRCK, TCON, APIC, COMM, ID3NoHeaderError
+    ID3, TIT2, TPE1, TALB, TPE2, TDRC, TRCK, TCON, APIC, COMM, ID3NoHeaderError,
+    TCOM, TPOS, TCMP, TEXT, TPE3, TPE4, TBPM, TPUB, TCOP, TIT1, TIT3, TSRC, USLT,
 )
 from PIL import Image
 import io
@@ -161,6 +162,10 @@ async def lifespan(app: FastAPI):
             year         TEXT NOT NULL DEFAULT '',
             art_base64   TEXT
         );
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
     """)
     await _db.commit()
     cleanup_old_files()
@@ -252,6 +257,36 @@ class ID3Tags(BaseModel):
     genre: Optional[str] = Field(None, max_length=100)
     comment: Optional[str] = Field(None, max_length=2048)
     album_art_base64: Optional[str] = None  # Size validated separately
+    # Optional "additional tags" the user can enable in the tag editor
+    composer: Optional[str] = Field(None, max_length=500)
+    disc_number: Optional[str] = Field(None, max_length=20)
+    compilation: Optional[bool] = None
+    lyricist: Optional[str] = Field(None, max_length=500)
+    conductor: Optional[str] = Field(None, max_length=500)
+    remixer: Optional[str] = Field(None, max_length=500)
+    bpm: Optional[str] = Field(None, pattern=r"^\d{0,3}$")
+    publisher: Optional[str] = Field(None, max_length=500)
+    copyright: Optional[str] = Field(None, max_length=500)
+    grouping: Optional[str] = Field(None, max_length=500)
+    subtitle: Optional[str] = Field(None, max_length=500)
+    isrc: Optional[str] = Field(None, max_length=15)
+    lyrics: Optional[str] = Field(None, max_length=20000)
+
+
+# Text-frame mapping for the optional additional tags (ID3Tags attr -> frame class)
+EXTRA_TEXT_FRAMES = {
+    "composer": TCOM,
+    "disc_number": TPOS,
+    "lyricist": TEXT,
+    "conductor": TPE3,
+    "remixer": TPE4,
+    "bpm": TBPM,
+    "publisher": TPUB,
+    "copyright": TCOP,
+    "grouping": TIT1,
+    "subtitle": TIT3,
+    "isrc": TSRC,
+}
 
 
 class SaveRequest(BaseModel):
@@ -535,6 +570,21 @@ async def _db_delete_album(album_id: str) -> None:
     await _db.commit()
 
 
+async def _db_get_setting(key: str) -> Optional[str]:
+    async with _db.execute("SELECT value FROM settings WHERE key=?", (key,)) as cur:
+        row = await cur.fetchone()
+    return row["value"] if row else None
+
+
+async def _db_put_setting(key: str, value: str) -> None:
+    await _db.execute(
+        "INSERT INTO settings (key, value) VALUES (?, ?)"
+        " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
+    await _db.commit()
+
+
 # --- Admin request models ------------------------------------------------
 
 class LoginRequest(BaseModel):
@@ -554,6 +604,18 @@ class AdminAlbumRecord(BaseModel):
     genre: str = Field(default="", max_length=100)
     year: str = Field(default="", max_length=4)
     art_base64: Optional[str] = None  # size validated separately
+
+
+TagFieldKey = Annotated[str, Field(pattern=r"^[a-z_]{1,40}$")]
+
+TAG_LAYOUT_SETTING = "tag_layout"
+
+
+class TagLayoutRecord(BaseModel):
+    # Field keys are validated against the known set on the client, so unknown
+    # keys from older/newer clients are tolerated here rather than rejected.
+    order: list[TagFieldKey] = Field(max_length=64)
+    enabled: list[TagFieldKey] = Field(max_length=64)
 
 
 # --- Endpoints ------------------------------------------------------------
@@ -682,7 +744,8 @@ async def save_with_tags(request: Request, req: SaveRequest):
         except ID3NoHeaderError:
             tags = ID3()
 
-        for frame in ("TIT2", "TPE1", "TALB", "TPE2", "TDRC", "TRCK", "TCON", "APIC", "COMM"):
+        for frame in ("TIT2", "TPE1", "TALB", "TPE2", "TDRC", "TRCK", "TCON", "APIC", "COMM",
+                      "TCMP", "USLT", *(cls.__name__ for cls in EXTRA_TEXT_FRAMES.values())):
             tags.delall(frame)
 
         t = req.tags
@@ -702,6 +765,14 @@ async def save_with_tags(request: Request, req: SaveRequest):
             tags.add(TCON(encoding=3, text=t.genre))
         if t.comment and t.comment.strip():
             tags.add(COMM(encoding=3, lang="eng", desc="", text=t.comment.strip()))
+        for attr, frame_cls in EXTRA_TEXT_FRAMES.items():
+            value = (getattr(t, attr) or "").strip()
+            if value:
+                tags.add(frame_cls(encoding=3, text=value))
+        if t.compilation:
+            tags.add(TCMP(encoding=3, text="1"))
+        if t.lyrics and t.lyrics.strip():
+            tags.add(USLT(encoding=3, lang="eng", desc="", text=t.lyrics.strip()))
         if t.album_art_base64:
             if len(t.album_art_base64) > MAX_ALBUM_ART_B64_BYTES:
                 raise HTTPException(status_code=400, detail="Album art too large (max ~5 MB)")
@@ -1076,6 +1147,25 @@ async def delete_album(album_id: str, _: None = Depends(require_admin)):
     if len(album_id) > 500:
         raise HTTPException(status_code=400, detail="album_id too long")
     await _db_delete_album(album_id)
+    return {"ok": True}
+
+
+@app.get("/api/admin/tag-layout")
+async def get_tag_layout(_: None = Depends(require_admin)):
+    raw = await _db_get_setting(TAG_LAYOUT_SETTING)
+    if raw is None:
+        return {"layout": None}
+    try:
+        layout = TagLayoutRecord.model_validate_json(raw).model_dump()
+    except ValueError:
+        logger.warning("Stored tag layout is invalid; ignoring it")
+        layout = None
+    return {"layout": layout}
+
+
+@app.put("/api/admin/tag-layout")
+async def put_tag_layout(record: TagLayoutRecord, _: None = Depends(require_admin)):
+    await _db_put_setting(TAG_LAYOUT_SETTING, record.model_dump_json())
     return {"ok": True}
 
 

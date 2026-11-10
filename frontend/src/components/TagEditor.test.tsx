@@ -153,7 +153,7 @@ describe('TagEditor rendering', () => {
     await user.clear(displayInput);
     await user.type(displayInput, 'Mapped Display');
 
-    await user.click(screen.getByRole('button', { name: /add/i }));
+    await user.click(screen.getByRole('button', { name: /^add$/i }));
 
     await waitFor(() => {
       expect(artistInput.value).toBe('Mapped Display');
@@ -455,5 +455,114 @@ describe('TagEditor genre autocomplete', () => {
     fireEvent.keyDown(genreInput, { key: 'ArrowRight' });
 
     expect(genreInput).toHaveValue('Synth-pop');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Additional tags popup
+// ---------------------------------------------------------------------------
+
+describe('TagEditor additional tags', () => {
+  function fieldLabelsInOrder(): string[] {
+    return Array.from(document.querySelectorAll<HTMLLabelElement>('form label[for^="tag-"]'))
+      .map((l) => l.htmlFor.replace(/^tag-/, ''));
+  }
+
+  it('hides additional tags by default', () => {
+    setup();
+    expect(screen.queryByLabelText(/composer/i)).not.toBeInTheDocument();
+  });
+
+  it('shows a field on the main page after toggling it on in the popup', async () => {
+    const user = userEvent.setup();
+    const onFieldLayoutChange = vi.fn();
+    render(
+      <TagEditor
+        metadata={BASE_METADATA}
+        onSave={vi.fn()}
+        isSaving={false}
+        onReset={vi.fn()}
+        onFieldLayoutChange={onFieldLayoutChange}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: /additional tags/i }));
+    await user.click(screen.getByRole('switch', { name: /show composer/i }));
+    await user.click(screen.getByRole('button', { name: /^close$/i }));
+
+    expect(screen.getByLabelText(/composer/i)).toBeInTheDocument();
+    expect(onFieldLayoutChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ enabled: ['composer'] })
+    );
+  });
+
+  it('reorders default fields with the arrow buttons', async () => {
+    const user = userEvent.setup();
+    setup();
+
+    expect(fieldLabelsInOrder().slice(0, 2)).toEqual(['title', 'artist']);
+    await user.click(screen.getByRole('button', { name: /additional tags/i }));
+    await user.click(screen.getByRole('button', { name: /move artist up/i }));
+
+    expect(fieldLabelsInOrder().slice(0, 2)).toEqual(['artist', 'title']);
+  });
+
+  it('renders fields in the order of a provided layout', () => {
+    render(
+      <TagEditor
+        metadata={BASE_METADATA}
+        onSave={vi.fn()}
+        isSaving={false}
+        onReset={vi.fn()}
+        fieldLayout={{
+          order: ['composer', 'genre', 'title', 'artist', 'album', 'album_artist', 'year', 'track_number',
+            'disc_number', 'compilation', 'lyricist', 'conductor', 'remixer', 'bpm', 'publisher',
+            'copyright', 'grouping', 'subtitle', 'isrc', 'lyrics'],
+          enabled: ['composer'],
+        }}
+      />
+    );
+    expect(fieldLabelsInOrder().slice(0, 3)).toEqual(['composer', 'genre', 'title']);
+  });
+
+  it('saves enabled additional tags and blanks hidden ones', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const layout = {
+      order: ['title', 'artist', 'album', 'album_artist', 'year', 'track_number', 'genre',
+        'composer', 'disc_number', 'compilation', 'lyricist', 'conductor', 'remixer', 'bpm',
+        'publisher', 'copyright', 'grouping', 'subtitle', 'isrc', 'lyrics'],
+      enabled: ['composer', 'compilation'],
+    } as const;
+    const { rerender } = render(
+      <TagEditor
+        metadata={BASE_METADATA}
+        onSave={onSave}
+        isSaving={false}
+        onReset={vi.fn()}
+        fieldLayout={{ order: [...layout.order], enabled: [...layout.enabled, 'publisher'] }}
+      />
+    );
+
+    await user.type(screen.getByLabelText(/composer/i), 'Jane Doe');
+    await user.type(screen.getByLabelText(/publisher/i), 'Some Label');
+    await user.click(screen.getByRole('switch', { name: /part of a compilation/i }));
+
+    // Hide publisher again before saving
+    rerender(
+      <TagEditor
+        metadata={BASE_METADATA}
+        onSave={onSave}
+        isSaving={false}
+        onReset={vi.fn()}
+        fieldLayout={{ order: [...layout.order], enabled: [...layout.enabled] }}
+      />
+    );
+    await user.click(screen.getByRole('button', { name: /save & download/i }));
+
+    const tags = onSave.mock.calls[0][0];
+    expect(tags.composer).toBe('Jane Doe');
+    expect(tags.compilation).toBe(true);
+    expect(tags.publisher).toBe('');
   });
 });

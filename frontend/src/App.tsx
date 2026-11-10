@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { KeyRound, LogOut } from 'lucide-react';
 import DownloadForm from './components/DownloadForm';
 import LoadingState from './components/LoadingState';
@@ -10,14 +10,18 @@ import {
   verifyAdminToken,
   getAdminMappings,
   getAdminAlbums,
+  getAdminTagLayout,
+  putAdminTagLayout,
   getAiStatus,
 } from './api';
 import { lookupArtist, lookupAlbum, blobToBase64, rememberGenre } from './db';
 import { safeFilename } from './utils/filename';
+import { loadSessionTagLayout, saveSessionTagLayout, type TagFieldLayout } from './tagFields';
 import type { AppStep, DownloadMetadata, ID3Tags, TrimRange } from './types';
 import type { ArtistMapping, AlbumRecord } from './db';
 
 const STORAGE_KEY = 'admin_token';
+const TAG_LAYOUT_SAVE_DELAY_MS = 500;
 
 export default function App() {
   const [step, setStep] = useState<AppStep>('input');
@@ -40,6 +44,10 @@ export default function App() {
   const [adminAlbums, setAdminAlbums] = useState<AlbumRecord[]>([]);
   const [adminConfigError, setAdminConfigError] = useState<string | null>(null);
 
+  // ── Tag field layout (account-wide for admin, per browser session otherwise) ─
+  const [tagLayout, setTagLayout] = useState<TagFieldLayout>(loadSessionTagLayout);
+  const tagLayoutSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // ── AI availability ────────────────────────────────────────────────────────
   const [aiAvailable, setAiAvailable] = useState<boolean | null>(null);
 
@@ -57,12 +65,14 @@ export default function App() {
       }
       setIsAdmin(true);
       try {
-        const [mappings, albums] = await Promise.all([
+        const [mappings, albums, layout] = await Promise.all([
           getAdminMappings(adminToken),
           getAdminAlbums(adminToken),
+          getAdminTagLayout(adminToken),
         ]);
         setAdminMappings(mappings);
         setAdminAlbums(albums);
+        if (layout) setTagLayout(layout);
       } catch {
         setAdminConfigError('Failed to load your saved settings from the server. Your data is safe — try refreshing.');
       }
@@ -75,9 +85,10 @@ export default function App() {
     setAdminToken(token);
     setIsAdmin(true);
     setShowLoginModal(false);
-    Promise.all([getAdminMappings(token), getAdminAlbums(token)]).then(([m, a]) => {
+    Promise.all([getAdminMappings(token), getAdminAlbums(token), getAdminTagLayout(token)]).then(([m, a, layout]) => {
       setAdminMappings(m);
       setAdminAlbums(a);
+      if (layout) setTagLayout(layout);
     });
   }
 
@@ -87,6 +98,23 @@ export default function App() {
     setIsAdmin(false);
     setAdminMappings([]);
     setAdminAlbums([]);
+    if (tagLayoutSaveTimer.current) clearTimeout(tagLayoutSaveTimer.current);
+    setTagLayout(loadSessionTagLayout());
+  }
+
+  function handleTagLayoutChange(layout: TagFieldLayout) {
+    setTagLayout(layout);
+    if (!isAdmin || !adminToken) {
+      saveSessionTagLayout(layout);
+      return;
+    }
+    // Debounced so rapid reordering sends one request and can't land out of order.
+    if (tagLayoutSaveTimer.current) clearTimeout(tagLayoutSaveTimer.current);
+    tagLayoutSaveTimer.current = setTimeout(() => {
+      putAdminTagLayout(adminToken, layout).catch(() =>
+        setError('Failed to save your tag field layout to the server.')
+      );
+    }, TAG_LAYOUT_SAVE_DELAY_MS);
   }
 
   async function handleDownload(url: string, bitrate: number) {
@@ -256,6 +284,8 @@ export default function App() {
               onMappingsChange={isAdmin ? setAdminMappings : undefined}
               onAlbumsChange={isAdmin ? setAdminAlbums : undefined}
               aiAvailable={aiAvailable ?? true}
+              fieldLayout={tagLayout}
+              onFieldLayoutChange={handleTagLayoutChange}
             />
           )}
         </div>
