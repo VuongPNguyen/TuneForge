@@ -26,6 +26,10 @@ import {
 } from '../db';
 import { safeFilename as sanitizeFilename } from '../utils/filename';
 import { loadActiveTab, saveActiveTab, type ActiveTab } from '../utils/activeTab';
+import {
+  MAPPING_SORT_OPTIONS, loadMappingSort, mappingSortId, saveMappingSort, sortMappings,
+  type MappingSort,
+} from '../utils/librarySort';
 
 interface Props {
   metadata: DownloadMetadata;
@@ -184,6 +188,7 @@ export default function TagEditor({
       : null
   );
   const [mappingsLibraryOpen, setMappingsLibraryOpen] = useState(false);
+  const [mappingSort, setMappingSort] = useState<MappingSort>(loadMappingSort);
   const [albumsExpanded, setAlbumsExpanded] = useState(false);
   const [displayEdits, setDisplayEdits] = useState<Record<string, string>>({});
   const [newRaw, setNewRaw] = useState('');
@@ -200,12 +205,16 @@ export default function TagEditor({
   const isSmartMode = activeTab === 'music' && (musicMode === 'covers' || musicMode === 'singles');
 
   const sortedMappings = useMemo(
-    () =>
-      [...mappings].sort((a, b) =>
-        a.raw.localeCompare(b.raw, undefined, { sensitivity: 'base' })
-      ),
-    [mappings]
+    () => sortMappings(mappings, mappingSort),
+    [mappings, mappingSort]
   );
+
+  function handleMappingSortChange(id: string) {
+    const option = MAPPING_SORT_OPTIONS.find((o) => o.id === id);
+    if (!option) return;
+    setMappingSort(option.sort);
+    saveMappingSort(option.sort);
+  }
 
   // Prefill the "Channel name (exact)" field with the original channel name
   // so users don't need to copy/paste it manually (e.g. after adding a mapping).
@@ -512,8 +521,8 @@ export default function TagEditor({
       await putArtistMapping({ raw, display });
     }
     const next = mappings.find((m) => m.raw === raw)
-      ? mappings.map((m) => m.raw === raw ? { raw, display } : m)
-      : [...mappings, { raw, display }];
+      ? mappings.map((m) => m.raw === raw ? { ...m, display } : m)
+      : [...mappings, { raw, display, added_at: Date.now() }];
     setMappings(next);
     onMappingsChange?.(next);
 
@@ -1668,6 +1677,19 @@ export default function TagEditor({
                 Automatically replaces a channel name with your preferred display name before the
                 tag editor opens. Edit display names or remove entries you no longer need.
               </p>
+              <div className="flex items-center justify-end gap-2 px-4 pt-3">
+                <select
+                  value={mappingSortId(mappingSort)}
+                  onChange={(e) => handleMappingSortChange(e.target.value)}
+                  aria-label="Sort mappings"
+                  className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-slate-300
+                    outline-none focus:border-brand-500/60 cursor-pointer"
+                >
+                  {MAPPING_SORT_OPTIONS.map((o) => (
+                    <option key={o.id} value={o.id} className="bg-slate-900">{o.label}</option>
+                  ))}
+                </select>
+              </div>
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5 min-h-0">
                 {sortedMappings.length === 0 ? (
                   <p className="text-sm text-slate-600 py-2">No mappings saved yet.</p>
