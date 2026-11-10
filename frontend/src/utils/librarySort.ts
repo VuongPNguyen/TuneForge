@@ -40,7 +40,30 @@ export function sortMappings(mappings: ArtistMapping[], sort: MappingSort): Arti
   });
 }
 
+export function sortGenres(names: string[], direction: SortDirection): string[] {
+  const dir = direction === 'asc' ? 1 : -1;
+  return [...names].sort((a, b) => compareText(a, b) * dir);
+}
+
 // ── Persistence ─────────────────────────────────────────────────────────────
+
+const GENRE_SORT_KEY = 'genre_sort';
+
+export function loadGenreSort(): SortDirection {
+  try {
+    return localStorage.getItem(GENRE_SORT_KEY) === 'desc' ? 'desc' : 'asc';
+  } catch {
+    return 'asc';
+  }
+}
+
+export function saveGenreSort(direction: SortDirection): void {
+  try {
+    localStorage.setItem(GENRE_SORT_KEY, direction);
+  } catch {
+    // Storage may be unavailable (e.g. privacy mode); the sort still applies for now.
+  }
+}
 
 const MAPPING_SORT_KEY = 'mapping_sort';
 

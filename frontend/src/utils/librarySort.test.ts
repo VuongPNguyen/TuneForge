@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_MAPPING_SORT, MAPPING_SORT_OPTIONS, loadMappingSort, saveMappingSort, sortMappings,
+  loadGenreSort, saveGenreSort, sortGenres,
 } from './librarySort';
 
 const MAPPINGS = [
@@ -34,6 +35,20 @@ describe('sortMappings', () => {
     const copy = [...MAPPINGS];
     sortBy('raw-desc');
     expect(MAPPINGS).toEqual(copy);
+  });
+});
+
+describe('sortGenres', () => {
+  it('sorts genres A–Z and Z–A, case-insensitively', () => {
+    const genres = ['rock', 'Ambient', 'jazz'];
+    expect(sortGenres(genres, 'asc')).toEqual(['Ambient', 'jazz', 'rock']);
+    expect(sortGenres(genres, 'desc')).toEqual(['rock', 'jazz', 'Ambient']);
+  });
+
+  it('remembers the genre sort direction', () => {
+    expect(loadGenreSort()).toBe('asc');
+    saveGenreSort('desc');
+    expect(loadGenreSort()).toBe('desc');
   });
 });
 

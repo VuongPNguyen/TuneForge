@@ -28,7 +28,8 @@ import { safeFilename as sanitizeFilename } from '../utils/filename';
 import { loadActiveTab, saveActiveTab, type ActiveTab } from '../utils/activeTab';
 import {
   MAPPING_SORT_OPTIONS, loadMappingSort, mappingSortId, saveMappingSort, sortMappings,
-  type MappingSort,
+  loadGenreSort, saveGenreSort, sortGenres,
+  type MappingSort, type SortDirection,
 } from '../utils/librarySort';
 
 interface Props {
@@ -197,6 +198,7 @@ export default function TagEditor({
 
   const [savedGenres, setSavedGenres] = useState<string[]>([]);
   const [genreLibraryOpen, setGenreLibraryOpen] = useState(false);
+  const [genreSort, setGenreSort] = useState<SortDirection>(loadGenreSort);
   const [genreEdits, setGenreEdits] = useState<Record<string, string>>({});
   const [newSavedGenre, setNewSavedGenre] = useState('');
   const genreInputRef = useRef<HTMLInputElement>(null);
@@ -208,6 +210,13 @@ export default function TagEditor({
     () => sortMappings(mappings, mappingSort),
     [mappings, mappingSort]
   );
+
+  const sortedGenres = useMemo(() => sortGenres(savedGenres, genreSort), [savedGenres, genreSort]);
+
+  function handleGenreSortChange(direction: SortDirection) {
+    setGenreSort(direction);
+    saveGenreSort(direction);
+  }
 
   function handleMappingSortChange(id: string) {
     const option = MAPPING_SORT_OPTIONS.find((o) => o.id === id);
@@ -1760,11 +1769,23 @@ export default function TagEditor({
               <p className="px-4 pt-3 text-xs text-slate-500 leading-relaxed">
                 Genres are remembered when you save and download a track. Edit names or remove entries you no longer need.
               </p>
+              <div className="flex items-center justify-end gap-2 px-4 pt-3">
+                <select
+                  value={genreSort}
+                  onChange={(e) => handleGenreSortChange(e.target.value as SortDirection)}
+                  aria-label="Sort genres"
+                  className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-slate-300
+                    outline-none focus:border-brand-500/60 cursor-pointer"
+                >
+                  <option value="asc" className="bg-slate-900">A–Z</option>
+                  <option value="desc" className="bg-slate-900">Z–A</option>
+                </select>
+              </div>
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5 min-h-0">
-                {savedGenres.length === 0 ? (
+                {sortedGenres.length === 0 ? (
                   <p className="text-sm text-slate-600 py-2">No genres saved yet — download a track with a genre to build this list.</p>
                 ) : (
-                  savedGenres.map((name) => (
+                  sortedGenres.map((name) => (
                     <div
                       key={name}
                       className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/3 border border-white/6"

@@ -627,3 +627,34 @@ describe('TagEditor mappings library', () => {
     expect(mappingRowOrder()).toEqual(['gamma channel', 'beta channel', 'alpha channel']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Saved genres library
+// ---------------------------------------------------------------------------
+
+describe('TagEditor genres library', () => {
+  async function openGenreLibrary() {
+    const user = userEvent.setup();
+    mockGetGenreNames.mockResolvedValue(['Rock', 'Ambient', 'Jazz']);
+    setup();
+    await user.click(screen.getByRole('button', { name: /manage saved genres/i }));
+    await screen.findByLabelText('Edit genre Rock');
+    return user;
+  }
+
+  function genreRowOrder(): string[] {
+    return screen
+      .getAllByLabelText(/^Edit genre /)
+      .map((el) => el.getAttribute('aria-label')!.replace('Edit genre ', ''));
+  }
+
+  afterEach(() => mockGetGenreNames.mockResolvedValue([]));
+
+  it('sorts genres A–Z by default and Z–A on request', async () => {
+    const user = await openGenreLibrary();
+    expect(genreRowOrder()).toEqual(['Ambient', 'Jazz', 'Rock']);
+
+    await user.selectOptions(screen.getByLabelText(/sort genres/i), 'desc');
+    expect(genreRowOrder()).toEqual(['Rock', 'Jazz', 'Ambient']);
+  });
+});
