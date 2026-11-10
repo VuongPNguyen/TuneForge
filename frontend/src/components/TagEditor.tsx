@@ -25,6 +25,7 @@ import {
   type ArtistMapping, type AlbumRecord,
 } from '../db';
 import { safeFilename as sanitizeFilename } from '../utils/filename';
+import { loadActiveTab, saveActiveTab, type ActiveTab } from '../utils/activeTab';
 
 interface Props {
   metadata: DownloadMetadata;
@@ -61,8 +62,6 @@ function ToggleSwitch({ on }: { on: boolean }) {
 }
 
 type MusicMode = 'covers' | 'singles' | 'albums';
-type ActiveTab = 'default' | 'music';
-
 const MODE_DESCRIPTIONS: Record<MusicMode, string> = {
   covers: 'Artist and album start from the album artist (editable; they update again when it changes)',
   singles: 'Album mirrors title, artist mirrors album artist and track number is set to 1 (all editable; album and artist update when the parent changes)',
@@ -161,7 +160,7 @@ export default function TagEditor({
   const [endInput, setEndInput] = useState(() => formatDuration(trackDuration ?? 0));
 
   // ── Tab / mode state ───────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<ActiveTab>('default');
+  const [activeTab, setActiveTab] = useState<ActiveTab>(loadActiveTab);
   const [musicMode, setMusicMode] = useState<MusicMode | null>(null);
   const [albumSaveStatus, setAlbumSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [autofillDismissed, setAutofillDismissed] = useState(false);
@@ -968,7 +967,7 @@ export default function TagEditor({
           <button
             key={tab}
             type="button"
-            onClick={() => setActiveTab(tab)}
+            onClick={() => { setActiveTab(tab); saveActiveTab(tab); }}
             disabled={isSaving}
             className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-all capitalize cursor-pointer disabled:opacity-40
               ${activeTab === tab

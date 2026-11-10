@@ -5,9 +5,6 @@
 - Fix save album
 - Multiple Artists should be separated by a slash "/"
 - Bad image link gives bad error.
-- Have memory to remember previous "page" since last download.
-  - If in the music page, stay in music.
-  - If in default, stay in default.
 - Add sorting options to artist mapping
   - Alphabetical, asc/desc
   - Order by date added
@@ -21,6 +18,10 @@
   - Should follow the user as they move down the page.
 
 Complete:
+- 11/09/2026
+  - Have memory to remember previous "page" since last download.
+    - The last selected tab (Default or Music) is stored in localStorage and reopened on the next download.
+
 - 11/09/2026
   - Add an additional tags button with popup.
     - Toggle extra ID3 tags (composer, disc number, compilation, lyricist, BPM, lyrics, etc.) onto the main page.

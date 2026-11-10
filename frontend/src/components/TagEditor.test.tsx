@@ -70,6 +70,18 @@ describe('TagEditor rendering', () => {
     expect(screen.getByRole('heading', { name: /edit id3 tags/i })).toBeInTheDocument();
   });
 
+  it('reopens on the tab that was last selected', async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(
+      <TagEditor metadata={BASE_METADATA} onSave={vi.fn()} isSaving={false} onReset={vi.fn()} />
+    );
+    await user.click(screen.getByRole('button', { name: /^music$/i }));
+    unmount();
+
+    setup();
+    expect(await screen.findByPlaceholderText(/channel name \(exact\)/i)).toBeInTheDocument();
+  });
+
   it('pre-fills the title field with metadata', () => {
     setup();
     expect(screen.getByDisplayValue('Test Track')).toBeInTheDocument();
