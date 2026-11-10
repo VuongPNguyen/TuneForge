@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import TagEditor from './TagEditor';
@@ -576,5 +576,108 @@ describe('TagEditor additional tags', () => {
     expect(tags.composer).toBe('Jane Doe');
     expect(tags.compilation).toBe(true);
     expect(tags.publisher).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Saved mappings library
+// ---------------------------------------------------------------------------
+
+describe('TagEditor mappings library', () => {
+  const MAPPINGS = [
+    { raw: 'beta channel', display: 'Alpha', added_at: 2 },
+    { raw: 'alpha channel', display: 'Zeta', added_at: 3 },
+    { raw: 'gamma channel', display: 'Mid', added_at: 1 },
+  ];
+
+  async function openMappingsLibrary() {
+    const user = userEvent.setup();
+    mockGetArtistMappings.mockResolvedValue(MAPPINGS);
+    setup();
+    await user.click(screen.getByRole('button', { name: /^music$/i }));
+    await user.click(await screen.findByRole('button', { name: /manage saved mappings/i }));
+    await screen.findByLabelText('Display name for alpha channel');
+    return user;
+  }
+
+  function mappingRowOrder(): string[] {
+    return screen
+      .getAllByLabelText(/^Display name for /)
+      .map((el) => el.getAttribute('aria-label')!.replace('Display name for ', ''));
+  }
+
+  afterEach(() => mockGetArtistMappings.mockResolvedValue([]));
+
+  it('sorts by original name A–Z by default', async () => {
+    await openMappingsLibrary();
+    expect(mappingRowOrder()).toEqual(['alpha channel', 'beta channel', 'gamma channel']);
+  });
+
+  it('can sort by display name or date added', async () => {
+    const user = await openMappingsLibrary();
+    const select = screen.getByLabelText(/sort mappings by/i);
+
+    await user.selectOptions(select, 'display');
+    expect(mappingRowOrder()).toEqual(['beta channel', 'gamma channel', 'alpha channel']);
+
+    await user.selectOptions(select, 'date');
+    expect(mappingRowOrder()).toEqual(['gamma channel', 'beta channel', 'alpha channel']);
+
+    await user.click(screen.getByRole('button', { name: /sort direction: ascending \(oldest first\)/i }));
+    expect(mappingRowOrder()).toEqual(['alpha channel', 'beta channel', 'gamma channel']);
+    expect(screen.getByRole('button', { name: /descending \(newest first\)/i })).toBeInTheDocument();
+  });
+
+  it('searches both original and display names', async () => {
+    const user = await openMappingsLibrary();
+    const search = screen.getByLabelText(/search mappings/i);
+
+    await user.type(search, 'zeta');
+    expect(mappingRowOrder()).toEqual(['alpha channel']);
+
+    await user.clear(search);
+    await user.type(search, 'gamma');
+    expect(mappingRowOrder()).toEqual(['gamma channel']);
+
+    await user.clear(search);
+    await user.type(search, 'nothing here');
+    expect(screen.getByText(/no mappings match/i)).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Saved genres library
+// ---------------------------------------------------------------------------
+
+describe('TagEditor genres library', () => {
+  async function openGenreLibrary() {
+    const user = userEvent.setup();
+    mockGetGenreNames.mockResolvedValue(['Rock', 'Ambient', 'Jazz']);
+    setup();
+    await user.click(screen.getByRole('button', { name: /manage saved genres/i }));
+    await screen.findByLabelText('Edit genre Rock');
+    return user;
+  }
+
+  function genreRowOrder(): string[] {
+    return screen
+      .getAllByLabelText(/^Edit genre /)
+      .map((el) => el.getAttribute('aria-label')!.replace('Edit genre ', ''));
+  }
+
+  afterEach(() => mockGetGenreNames.mockResolvedValue([]));
+
+  it('sorts genres A–Z by default and Z–A on request', async () => {
+    const user = await openGenreLibrary();
+    expect(genreRowOrder()).toEqual(['Ambient', 'Jazz', 'Rock']);
+
+    await user.click(screen.getByRole('button', { name: /sort direction: ascending \(a–z\)/i }));
+    expect(genreRowOrder()).toEqual(['Rock', 'Jazz', 'Ambient']);
+  });
+
+  it('filters genres by search text', async () => {
+    const user = await openGenreLibrary();
+    await user.type(screen.getByLabelText(/search genres/i), 'AM');
+    expect(genreRowOrder()).toEqual(['Ambient']);
   });
 });

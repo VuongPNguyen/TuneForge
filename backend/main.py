@@ -151,8 +151,9 @@ async def lifespan(app: FastAPI):
     await _db.execute("PRAGMA foreign_keys=ON")
     await _db.executescript("""
         CREATE TABLE IF NOT EXISTS artist_mappings (
-            raw     TEXT PRIMARY KEY,
-            display TEXT NOT NULL
+            raw      TEXT PRIMARY KEY,
+            display  TEXT NOT NULL,
+            added_at INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS albums (
             id           TEXT PRIMARY KEY,
@@ -167,6 +168,13 @@ async def lifespan(app: FastAPI):
             value TEXT NOT NULL
         );
     """)
+    async with _db.execute("PRAGMA table_info(artist_mappings)") as cur:
+        mapping_columns = {row["name"] for row in await cur.fetchall()}
+    if "added_at" not in mapping_columns:
+        # Pre-existing mappings get 0 so they sort as the oldest entries.
+        await _db.execute(
+            "ALTER TABLE artist_mappings ADD COLUMN added_at INTEGER NOT NULL DEFAULT 0"
+        )
     await _db.commit()
     cleanup_old_files()
     task = asyncio.create_task(_periodic_cleanup())
@@ -523,16 +531,22 @@ async def require_admin(
 # --- Admin config storage (SQLite) ---------------------------------------
 
 async def _db_get_mappings() -> list[dict]:
-    async with _db.execute("SELECT raw, display FROM artist_mappings ORDER BY raw") as cur:
+    async with _db.execute(
+        "SELECT raw, display, added_at FROM artist_mappings ORDER BY added_at, rowid"
+    ) as cur:
         rows = await cur.fetchall()
-    return [{"raw": r["raw"], "display": r["display"]} for r in rows]
+    return [
+        {"raw": r["raw"], "display": r["display"], "added_at": r["added_at"]} for r in rows
+    ]
 
 
 async def _db_put_mapping(raw: str, display: str) -> None:
+    added_at = int(datetime.now(timezone.utc).timestamp() * 1000)
+    # Updating an existing mapping keeps its original added_at.
     await _db.execute(
-        "INSERT INTO artist_mappings (raw, display) VALUES (?, ?)"
+        "INSERT INTO artist_mappings (raw, display, added_at) VALUES (?, ?, ?)"
         " ON CONFLICT(raw) DO UPDATE SET display=excluded.display",
-        (raw, display),
+        (raw, display, added_at),
     )
     await _db.commit()
 

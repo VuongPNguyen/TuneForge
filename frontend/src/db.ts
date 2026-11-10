@@ -9,6 +9,8 @@ const GENRE_MAX_LEN = 100;
 export interface ArtistMapping {
   raw: string;
   display: string;
+  /** Epoch ms when first saved; absent/0 for mappings saved before this was tracked. */
+  added_at?: number;
 }
 
 export interface AlbumRecord {
@@ -52,7 +54,11 @@ export async function getArtistMappings(): Promise<ArtistMapping[]> {
 
 export async function putArtistMapping(mapping: ArtistMapping): Promise<void> {
   const db = await getDb();
-  await db.put('artist-mappings', mapping);
+  const existing: ArtistMapping | undefined = await db.get('artist-mappings', mapping.raw);
+  await db.put('artist-mappings', {
+    ...mapping,
+    added_at: existing ? existing.added_at : (mapping.added_at ?? Date.now()),
+  });
 }
 
 export async function deleteArtistMapping(raw: string): Promise<void> {

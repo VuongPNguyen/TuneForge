@@ -500,3 +500,40 @@ class TestTagLayoutEndpoint:
             "/api/admin/tag-layout", json={"order": ["DROP TABLE"], "enabled": []}
         )
         assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# /api/admin/mappings
+# ---------------------------------------------------------------------------
+
+class TestMappingsEndpoint:
+    def test_records_added_at_and_keeps_it_on_update(self, admin_client):
+        admin_client.put("/api/admin/mappings", json={"raw": "a", "display": "A"})
+        admin_client.put("/api/admin/mappings", json={"raw": "b", "display": "B"})
+        first = {m["raw"]: m for m in admin_client.get("/api/admin/mappings").json()}
+        assert first["a"]["added_at"] > 0
+        assert first["a"]["added_at"] <= first["b"]["added_at"]
+
+        admin_client.put("/api/admin/mappings", json={"raw": "a", "display": "A2"})
+        after = {m["raw"]: m for m in admin_client.get("/api/admin/mappings").json()}
+        assert after["a"]["display"] == "A2"
+        assert after["a"]["added_at"] == first["a"]["added_at"]
+
+    def test_migrates_tables_without_added_at(self, tmp_path, monkeypatch):
+        import sqlite3
+        import main as main_module
+
+        db_path = tmp_path / "legacy.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE artist_mappings (raw TEXT PRIMARY KEY, display TEXT NOT NULL)")
+        conn.execute("INSERT INTO artist_mappings VALUES ('old', 'Old')")
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr(main_module, "SQLITE_PATH", db_path)
+        monkeypatch.setattr(main_module, "JWT_SECRET", "test-secret")
+        with TestClient(app) as c:
+            c.headers.update({"Authorization": f"Bearer {main_module._create_token()}"})
+            assert c.get("/api/admin/mappings").json() == [
+                {"raw": "old", "display": "Old", "added_at": 0}
+            ]
