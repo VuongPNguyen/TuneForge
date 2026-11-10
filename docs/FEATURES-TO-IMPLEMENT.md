@@ -5,9 +5,6 @@
 - Fix save album
 - Multiple Artists should be separated by a slash "/"
 - Bad image link gives bad error.
-- Have memory to remember previous "page" since last download.
-  - If in the music page, stay in music.
-  - If in default, stay in default.
 - Add sorting options to artist mapping
   - Alphabetical, asc/desc
   - Order by date added
@@ -25,6 +22,10 @@
   - Should follow the user as they move down the page.
 
 Complete:
+- 11/09/2026
+  - Have memory to remember previous "page" since last download.
+    - The last selected tab (Default or Music) is stored in localStorage and reopened on the next download.
+
 - 09/29/2026
   - Add trimming feature
     - Dual-thumb range slider plus start/end mm:ss inputs in TagEditor.
